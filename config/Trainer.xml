@@ -5,20 +5,19 @@
     <actor>
         <NetWork>PolicyNetContinuous_SAC</NetWork>
         <h>1</h>
-        <w>100</w>
+        <w>126</w>
         <channel>1</channel>
         <action_bound>1</action_bound>
-        <hiden_dim>64</hiden_dim>
-        <output>2</output>
+        <hiden_dim>126</hiden_dim>
+        <output>3</output>
         <lr>0.0001</lr>
     </actor>
     <critic>
         <NetWork>QValueNetContinuous_SAC</NetWork>
         <h>1</h>
-        <w>100</w>
-        <channel>1</channel>
-        <hiden_dim>64</hiden_dim>
-        <action_dim>2</action_dim>
+        <w>126</w> <channel>1</channel>
+        <hiden_dim>126</hiden_dim>
+        <action_dim>3</action_dim>
         <lr>0.001</lr>
     </critic>
     <SAC_param>

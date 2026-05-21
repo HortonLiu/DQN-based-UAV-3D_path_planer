@@ -1,4 +1,7 @@
 <UI>
+    <!-- initially the map is 500x500 -->
+    <!-- if change this we need to update the PathPlan_City.xml either -->
+    <!-- x=width, y=len -->
     <x_axis3d_opts>
         <MAX>500</MAX>
         <MIN>0</MIN>

@@ -1,11 +1,3 @@
-'''
-Author: younghow 1102708501@qq.com
-Date: 2023-10-07 09:57:08
-LastEditors: younghow 1102708501@qq.com
-LastEditTime: 2023-11-07 10:04:03
-FilePath: \RLGF\simulator.py
-Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
-'''
 ###simulator.py
 ##功能：所有类别的顶端控制器，实现各类别参数的调控，
 ##并通过参数的调控生成不同的工厂类
@@ -38,6 +30,8 @@ torch.cuda.manual_seed_all(seed_value)
 torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
 
+from torch.utils.tensorboard import SummaryWriter # 加入這行
+
 #设置所有随机数种子
     
 
@@ -55,7 +49,10 @@ class simulator():
         self.result_path='logs/score_%s.csv' %cur_time
         self.CsvWriter=None   #csv写入类
         self.Max_score=-9999999999  #记录最高得分
-
+        # === [新增] 初始化 TensorBoard 寫入器 ===
+        # log_dir 指定 TensorBoard 檔案存放的資料夾，建議加上時間戳記區分不同次訓練
+        self.writer = SummaryWriter(log_dir='logs/tensorboard_%s' % cur_time)
+        # ======================================
         #仿真模拟控制器信号
         self.stat=1   #1:开始 2：暂停 3：停止
 
@@ -119,6 +116,15 @@ class simulator():
                             epside_end=time.time()
                             self.executed_time+=(epside_end-epside_start)
                             self.infos.append(info)    #添加反馈列表
+                            # === [新增] 將數據寫入 TensorBoard ===
+                            # 格式: add_scalar('圖表標題', 數值, X軸(通常是 Epoch 或 Step))
+                            if self.writer:
+                                current_step = self.num_episodes / 10 * i + i_episode + 1
+                                self.writer.add_scalar('Train/Average_Score', info['average_score'], current_step)
+                                self.writer.add_scalar('Train/Loss', info['loss'], current_step)
+                                self.writer.add_scalar('Train/Success_Rate', info['success'], current_step)
+                                self.writer.add_scalar('Train/Collision', info['meet_threaten'], current_step)
+                            # ===================================
                             if self.Max_score<info['average_score']:
                                 self.Max_score=info['average_score']
                             self.record_list()  #对缓存列表进行统计
