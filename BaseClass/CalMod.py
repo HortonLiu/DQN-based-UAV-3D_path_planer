@@ -13,7 +13,6 @@ import math
 # device = torch.device("cuda" if use_cuda else "cpu")    #使用GPU进行训练
 device = torch.device("cpu")    #使用cPU进行训练
 FloatTensor =  torch.FloatTensor  #cpu
-threaten_threshold=0.7  #威胁阈值
 class Loc():
     def __init__(self,x,y,z) -> None:
         self.x=x

@@ -9,13 +9,27 @@
         <y>250</y>
         <z>75</z>
     </position>
+    <!-- Min_V is ineffective -->
+    <!-- RL always use Max_V 2 run -->
     <Min_V>0.6</Min_V>
+    <!-- 1 -->
     <Max_V>1</Max_V>
     <Steering_angle>30</Steering_angle>   
     <R>50</R>
     <R_comm>75</R_comm>
     <Acceration>5</Acceration>
-    <Max_Step>150</Max_Step>
+    <!-- 900 -->
+    <Max_Step>432000</Max_Step>
+
+    <stuck_step_limit>10</stuck_step_limit>
+    <stuck_distance_threshold>3.0</stuck_distance_threshold>
+    <virtual_force_initial>10.0</virtual_force_initial>
+    <virtual_force_growth>2.0</virtual_force_growth>
+    <!-- max_virtual_force = 40.0 (original)-->
+    <max_virtual_force>20.0</max_virtual_force                                                                                    >
+    <bonus_steps_per_v_obs>50</bonus_steps_per_v_obs>
+    <max_virtual_obstacle>200</max_virtual_obstacle>
+
     <sub_granularity>30</sub_granularity>
     <map_granularity>1</map_granularity>
     <f_max>5</f_max>

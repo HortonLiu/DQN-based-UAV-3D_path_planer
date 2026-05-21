@@ -1,0 +1,90 @@
+<!-- UAV 參數設定檔 -->
+<Agent>
+    <Agent_Type>UAV</Agent_Type>
+    <name>UAV_</name>
+
+    <update_function_name>update_PathPlan</update_function_name> <!-- UAV 在每一步更新位置/動作時呼叫的函式名稱（對應 Python UAV 類中的更新函式） -->
+
+    <state_function_name>state_PathPlan</state_function_name> <!-- 產生強化學習「狀態向量」的函式名稱（對應 Python UAV 類中的狀態函式） -->
+
+    <APF_Enabled>0</APF_Enabled> <!-- 是否啟用 APF（Artificial Potential Field）動態避障：1=啟用，0=關閉，只用 RL -->
+
+    <position> <!-- UAV 初始位置（環境座標系） -->
+        <x>250</x>
+        <y>250</y>
+        <z>75</z>
+    </position>
+
+    <Min_V>0.6</Min_V> <!-- UAV 最小飛行速度（單位依環境設計，一般是「格/步」或 m/s） -->
+    <Max_V>1</Max_V>   <!-- UAV 最大飛行速度 -->
+
+    <Steering_angle>30</Steering_angle> <!-- 每一步允許的最大轉向角度（度），限制轉彎幅度，避免過於急轉 -->
+
+    <R>50</R> <!-- UAV 掃描障礙物的感知半徑 -->
+
+    <R_comm>75</R_comm> <!-- 多無人機協作通訊半徑 -->
+
+    <Acceration>5</Acceration> <!-- UAV 最大加速度（速度變化率上限，用於動力學與能耗計算） -->
+
+    <Max_Step>900</Max_Step> <!-- 單次任務允許的最大時間步長（Episode 中最多飛行步數，超過視為任務終止） -->
+
+    <!-- 判定卡死平衡點所需的步數 -->
+    <stuck_step_limit>30</stuck_step_limit>
+    <!-- 判定卡死的位移設定值 -->
+    <stuck_distance_threshold>3.0</stuck_distance_threshold>
+    <!-- 虛擬障礙物剛生成時的初始斥力 -->
+    <virtual_force_initial>10.0</virtual_force_initial>
+    <!-- 虛擬障礙物每次疊加的增長速度 -->
+    <virtual_force_growth>2.0</virtual_force_growth>
+    <!-- 虛擬障礙物斥力的最大值 -->
+    <max_virtual_force>40.0</max_virtual_force>
+    <!-- 每生成一次虛擬障礙物剛的步數獎勵 -->
+    <bonus_steps_per_v_obs>50</bonus_steps_per_v_obs>
+
+    <sub_granularity>30</sub_granularity> <!-- 子任務粒度：將整體任務切成多少子段（例如用於分段規劃或課程學習） -->
+
+    <map_granularity>1</map_granularity> <!-- 地圖離散粒度（1 表示每個單位格為基準；>1 時可表示把多個連續格視為一個網格單位） -->
+
+    <f_max>5</f_max> <!-- 最大航跡頻率/控制頻率相關參數（例如每秒最多更新幾次，與能耗模型或控制器約束相關） -->
+
+    <DFRL_param> <!-- 分散式/聯邦深度強化學習相關參數（Distributed/Federated RL） -->
+        <update_rate>0.05</update_rate> <!-- 全域參數更新比例：每次全域聚合時採用的新模型權重佔比（類似 FL 中的學習率） -->
+        <Top_G>20</Top_G>               <!-- 保留的「精英回合/精英軌跡」數量上限，用於從歷史中挑選 Top episodes 作為學習樣本 -->
+    </DFRL_param>
+
+    <Power_param> <!-- 能量與功耗模型相關參數 -->
+        <Fly_power> <!-- 飛行功耗模型，描述不同速度下旋翼 UAV 的能量消耗 -->
+            <P_i>89</P_i>   <!-- 誘導功率常數（懸停/升力相關的基準功率，單位約為 W） -->
+            <v_0>4.05</v_0> <!-- 參考速度 v0，用於經典 UAV 能耗公式中的標準速度（m/s） -->
+            <d_0>0.6</d_0>  <!-- 速度修正係數/阻力係數的一部分（與空氣阻力與機體形狀相關） -->
+            <rho>1.225</rho> <!-- 空氣密度（kg/m^3），標準海平面約 1.225，是能耗公式中的環境參數 -->
+            <s>0.05</s>     <!-- 旋翼盤面比/有效阻力面積比例（S，決定氣動阻力大小） -->
+            <A>0.5</A>      <!-- UAV 機體等效迎風面積（m^2），影響巡航時的阻力功耗 -->
+            <P_b>79</P_b>   <!-- 基礎機載電子/負載功率（例如航電系統耗電，與速度無關的固定功耗） -->
+            <F_b>120</F_b>  <!-- 基準推力/負載相關常數，用於能耗與推力的關係式 -->
+        </Fly_power>
+
+        <Communication_power>3</Communication_power> <!-- 通訊模組功率（W），用於計算 UAV 通訊能耗 -->
+    </Power_param>
+
+    <UEs_param> <!-- 地面用戶（UE，User Equipment）與其通訊模型參數 -->
+        <Agent_Type>UE_experience</Agent_Type> <!-- UE 模型類型：使用「基於經驗/資料」的 UE 子模型 -->
+        <UES_num>0</UES_num>              <!-- 地面用戶數量（0 表示本案例中不啟用 UE 模組或由環境動態生成） -->
+        <step_len>2</step_len>            <!-- UE 每一步的最大位移長度（UE 移動速度/步長） -->
+        <D_max>1000</D_max>              <!-- UAV 與 UE 之間考慮通訊的最大距離（超過則視為連線中斷） -->
+        <D>10</D>                        <!-- 距離離散間距（將 0~D_max 分段，用於路徑損耗或覆蓋度計算） -->
+        <F>0.05</F>                      <!-- 頻率或頻帶相關參數（例如用於路徑損耗公式中的工作頻率，單位 GHz 左右） -->
+        <B>1</B>                         <!-- 頻寬（MHz 或歸一化單位），影響 UE 傳輸速率與能耗 -->
+        <g_0>0.000142</g_0>              <!-- 路徑增益 g0：在參考距離處的平均通道增益（線性尺度） -->
+        <G_0>2.228</G_0>                 <!-- 天線增益/總體增益 G0（dB 或線性值，依原始模型而定） -->
+        <theta_2>-90</theta_2>           <!-- 仰角/俯角閾值，控制 LoS/NLoS 或天線方向圖的角度參數（單位：度） -->
+        <P_tr>0.1</P_tr>                 <!-- 每個 UE 的發射功率（W），用於計算上行鏈路的 SNR 與能耗 -->
+    </UEs_param>
+
+    <DSNs_param> <!-- Distributed Sensor Nodes（分散式感測節點）相關參數 -->
+        <DSN_num>6</DSN_num>          <!-- 感測節點數量（例如 6 個固定或隨機分佈的地面感測器） -->
+        <step_skill_max>2</step_skill_max> <!-- 感測節點在單步內可提供的最大「感測/服務能力」等級（自訂含義，影響獎勵或服務品質） -->
+        <DSN_gamma>1</DSN_gamma>      <!-- DSN 相關折扣/權重係數（例如在總獎勵中感測任務的權重或折扣因子） -->
+    </DSNs_param>
+
+</Agent>

@@ -348,7 +348,8 @@ class SAC_Trainer(BaseTrainer):
             if self.IsPriority_Replay==1:
                 critic_1_loss=is_weights*critic_1_loss
                 critic_2_loss=is_weights*critic_2_loss
-                abs_errors = torch.abs(torch.min(Q1, Q2) - td_target).detach().numpy().squeeze()
+                # [修改] 必須先將 Tensor 從 GPU 移回 CPU，才能轉換為 numpy 陣列
+                abs_errors = torch.abs(torch.min(Q1, Q2) - td_target).detach().cpu().numpy().squeeze()
                 self.replay_memory.batch_update(tree_idx, abs_errors)  # 更新经验的优先级
                 
             self.critic_1_optimizer.zero_grad()
@@ -442,16 +443,20 @@ class SAC_Trainer(BaseTrainer):
 
      #根据状态选取动作
     def get_action(self,state,eps):
-        if self.IS_Continuous==1:
-            state = torch.tensor([state], dtype=torch.float).to(self.device)
-            action = self.actor(state)[0]
-            return action.tolist()[0]
-        else:
-            state = torch.tensor([state], dtype=torch.float).to(self.device)
-            probs = self.actor(state)
-            action_dist = torch.distributions.Categorical(probs)
-            action = action_dist.sample()
-        return  action.item()
+        # [新增] 禁用梯度計算，這會讓 480Hz 的推理速度大幅提升，並節省巨量顯存
+        with torch.no_grad():
+            if self.IS_Continuous==1:
+                state = torch.tensor([state], dtype=torch.float).to(self.device)
+                action = self.actor(state)[0]
+                # [修改] 安全起見，確保資料從 GPU 回到 CPU 後再轉成 Python List
+                return action.cpu().tolist()[0]
+            else:
+                state = torch.tensor([state], dtype=torch.float).to(self.device)
+                probs = self.actor(state)
+                action_dist = torch.distributions.Categorical(probs)
+                action = action_dist.sample()
+            # [修改] 安全起見，確保資料從 GPU 回到 CPU
+            return action.cpu().item()
     
     def replace_param(self,target):
         #根据目标网络替换参数

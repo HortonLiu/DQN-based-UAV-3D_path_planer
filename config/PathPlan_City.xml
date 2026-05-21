@@ -2,6 +2,8 @@
 <simulator>
     <env>
         <Env_Type>PathPlan_City</Env_Type> 
+        <!-- initially the map is 500x500 -->
+        <!-- if change this we need to update the UI.xml either -->
         <len>500</len>
         <width>500</width>
         <h>100</h>
@@ -11,6 +13,7 @@
         <Is_On_Policy>0</Is_On_Policy>
         <FL_Loop>3</FL_Loop>
         <print_loop>2</print_loop>
+        <!-- if u dont want single UAV, change this -->
         <num_UAV>1</num_UAV>
         <Agent>
             <xml_path_agent>./config/UAV.xml</xml_path_agent>
@@ -28,8 +31,10 @@
             <DB_path>./config/DB.xml</DB_path>
         </DB>
     </env>
+    <!-- 10 -->
     <record_epo>10</record_epo>
-    <num_episodes>500</num_episodes> 
+    <!-- 1000 -->
+    <num_episodes>1000</num_episodes> 
     <max_eps_episode>1</max_eps_episode>
     <min_eps>0.1</min_eps>
     <TARGET_UPDATE>3</TARGET_UPDATE>
