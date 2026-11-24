@@ -19,7 +19,7 @@ class UAV(BaseAgent):
         self.name=param.get("name")
         self.j=param.get("j")
         self.V_vector=Loc(0,0,0)
-        self.Max_V=int(param.get("Max_V"))
+        self.Max_V=float(param.get("Max_V"))
         self.Steering_angle=float(param.get("Steering_angle"))/180*math.pi
         self.V=self.Calc_V()
         
@@ -28,9 +28,20 @@ class UAV(BaseAgent):
         self.Scan_Radius = float(param.get("Scan_Radius", 40.0))
         self.ac=int(param.get("Acceration"))+0.25*self.j
         
-        self.original_max_step = int(param.get("Max_Step"))
-        self.Max_Step = self.original_max_step
-        self.Step=0
+        # XML budgets remain in the original one-second navigation reference.
+        # The public Step counter still increases by two per physical update.
+        hardware_flag = int(param.get('Hardware_Hz_Enabled', 1))
+        if hardware_flag not in (0, 1):
+            raise ValueError('Hardware_Hz_Enabled must be 0 or 1')
+        self.hardware_hz_enabled = bool(hardware_flag)
+        self.reference_dt = 1.0
+        self.control_hz = self.freq_rl = 480 if self.hardware_hz_enabled else 1
+        self.control_dt = 1.0 / self.control_hz
+        self.step_increment = 2
+        self.step_units_per_second = self.step_increment * self.control_hz
+        self.controls_per_decision = self.control_hz
+        self.set_episode_duration(float(param.get("Max_Step")) * self.reference_dt)
+        self.Step = 0
         self.f_max=float(param.get("f_max"))+0.1*self.j
 
         # ==========================================
@@ -42,6 +53,11 @@ class UAV(BaseAgent):
         self.virtual_force_growth = float(param.get("virtual_force_growth", 2.0))
         self.max_virtual_force = float(param.get("max_virtual_force", 40.0))
         self.bonus_steps_per_v_obs = int(param.get("bonus_steps_per_v_obs", 50))
+        self.bonus_duration_s = self.bonus_steps_per_v_obs * self.reference_dt
+        self.bonus_step_increment = self._seconds_to_step_units(self.bonus_duration_s)
+        self.stuck_window_seconds = self.stuck_step_limit * self.reference_dt
+        self.virtual_influence_radius = 15.0
+        self.max_virtual_obstacles = int(param.get("max_virtual_obstacle", 200))
         # ==========================================
 
         # [動作空間] 3 維標準 APF 控制
@@ -116,41 +132,76 @@ class UAV(BaseAgent):
         self.start2goal=Eu_Loc_distance(self.position, self.goal)
         self.len_Astar=0 
 
-        # 卡死偵測與虛擬障礙物變數 (套用 XML 參數)
-        self.stuck_history = collections.deque(maxlen=self.stuck_step_limit)
+        self.freq_rtk = 20 if self.hardware_hz_enabled else 1
+        self.freq_lidar = 10 if self.hardware_hz_enabled else 1
+        self.steps_per_rtk = max(1, self.control_hz // self.freq_rtk)
+        self.steps_per_lidar = max(1, self.control_hz // self.freq_lidar)
+        self.path_record_period = self.steps_per_rtk
+        # Include both endpoints: 201 positions at 20 Hz, or 11 at one update/s.
+        self.stuck_history_samples = int(math.ceil(self.stuck_window_seconds * self.freq_rtk)) + 1
+        self.stuck_history = collections.deque(maxlen=self.stuck_history_samples)
         self.active_virtual_obstacles = []
         self.virtual_obstacle_records = []
+        self._reset_control_clock()
 
-        # 卡死偵測與虛擬障礙物變數 (套用 XML 參數)
-        self.stuck_history = collections.deque(maxlen=self.stuck_step_limit)
-        self.active_virtual_obstacles = []
-        self.virtual_obstacle_records = [] 
+    def _seconds_to_step_units(self, seconds):
+        return int(math.ceil(float(seconds) * self.control_hz - 1e-10)) * self.step_increment
 
-        # ==========================================
-        # [新增] 硬體感測器頻率設定 (Sim-to-Real)
-        # ==========================================
-        self.freq_rl = 480       # 控制迴圈頻率
-        self.freq_rtk = 20       # 定位更新頻率
-        self.freq_lidar = 10     # 光達掃描頻率
-        
-        # 計算每幾步(Step)才能更新一次感測器
-        self.steps_per_rtk = max(1, self.freq_rl // self.freq_rtk)      # 24 steps
-        self.steps_per_lidar = max(1, self.freq_rl // self.freq_lidar)  # 48 steps
-        
-        # 感測器暫存區 (Zero-Order Hold)
-        self.cached_rtk_pos = None
-        self.cached_rtk_vel = None
-        self.cached_lidar_grid = None
-        # ==========================================
+    def set_episode_duration(self, seconds):
+        seconds = float(seconds)
+        if not math.isfinite(seconds) or seconds <= 0:
+            raise ValueError("Episode duration must be a positive number of simulated seconds")
+        self.base_duration_s = seconds
+        self.original_max_step = self._seconds_to_step_units(seconds)
+        self.Max_Step = self.original_max_step
+
+    def _reset_control_clock(self):
+        self.Control_step = 0
+        self.sim_time = 0.0
+        self.path_times = []
+        self.cached_rtk_pos = self.cached_rtk_vel = self.cached_lidar_grid = None
+        self._last_rtk_tick = self._last_lidar_tick = -1
+        self._last_virtual_update_tick = 0
+        self.rtk_updates = self.lidar_updates = 0
+        self.collision_count = 0
+        self._next_virtual_id = 1
+        self.last_episode_result = {}
+        self.terminal_info = None
 
     def check_is_stuck(self):
-        if len(self.stuck_history) < self.stuck_step_limit:
+        if len(self.stuck_history) < self.stuck_history_samples:
             return False
         displacement = Eu_Loc_distance(self.stuck_history[0], self.stuck_history[-1])
-        # 使用 XML 設定的距離閾值
-        if displacement < self.stuck_distance_threshold:
-            return True
-        return False
+        return displacement < self.stuck_distance_threshold
+
+    def _update_virtual_sources(self):
+        # Gain growth and source insertion retain their one-second reference cadence.
+        if self.Control_step - self._last_virtual_update_tick < self.controls_per_decision:
+            return
+        self._last_virtual_update_tick = self.Control_step
+        if not self.check_is_stuck():
+            return
+        for source in self.active_virtual_obstacles:
+            if Eu_Loc_distance(self.position, source['pos']) < 5.0:
+                source['force'] = min(self.max_virtual_force,
+                                      source['force'] + self.virtual_force_growth)
+                break
+        else:
+            if len(self.active_virtual_obstacles) >= self.max_virtual_obstacles:
+                return
+            angle = random.uniform(0, 2 * math.pi)
+            self.active_virtual_obstacles.append({
+                'id': self._next_virtual_id, 'pos': copy.copy(self.position),
+                'force': self.virtual_force_initial, 'created_time_s': self.sim_time,
+                # Choose the near-coincident escape direction once, not 480 times/s.
+                'escape_direction': (math.cos(angle), math.sin(angle)),
+            })
+            self._next_virtual_id += 1
+            self.Max_Step += self.bonus_step_increment
+        self.virtual_obstacle_records = [{
+            'id': source['id'], 'pos': copy.copy(source['pos']),
+            'max_force': source['force'], 'created_time_s': source['created_time_s'],
+        } for source in self.active_virtual_obstacles]
 
     def cal_force(self, current_pos, k_rep_obs=15.0, k_att=1.0):
         total_force = Loc(0, 0, 0)
@@ -206,16 +257,14 @@ class UAV(BaseAgent):
             vx = current_pos.x - v_obs['pos'].x
             vy = current_pos.y - v_obs['pos'].y
             
-            if abs(vx) < 0.1 and abs(vy) < 0.1:
-                vx = random.uniform(-1, 1)
-                vy = random.uniform(-1, 1)
-            
-            norm_v = math.sqrt(vx**2 + vy**2) + 0.001
-            unit_vx = vx / norm_v
-            unit_vy = vy / norm_v
-            
-            dist_to_vobs = norm_v
-            v_range = 15.0
+            distance = math.hypot(vx, vy)
+            if distance < 0.1:
+                unit_vx, unit_vy = v_obs.get('escape_direction', (1.0, 0.0))
+            else:
+                unit_vx = vx / (distance + 0.001)
+                unit_vy = vy / (distance + 0.001)
+            dist_to_vobs = distance
+            v_range = self.virtual_influence_radius
             if dist_to_vobs < v_range:
                 current_v_force = v_obs['force'] * (1.0 - dist_to_vobs/v_range)
                 f_virtual.x += unit_vx * current_v_force
@@ -261,31 +310,27 @@ class UAV(BaseAgent):
         if not os.path.exists('logs'):
             os.makedirs('logs')
         path='logs/%s_%s.csv' %(self.name,cur_time)
-        file=open(path,'a+',newline="")
-        self.CsvWriter=csv.writer(file)
+        self._record_file = open(path, 'a+', newline="", encoding="utf-8")
+        self.CsvWriter = csv.writer(self._record_file)
         self.CsvWriter.writerow(["sum_Episode","Episode"," Score"," Avg.Score","eps-greedy","success","failed","meet_threaten",'loss','ALL_UEs_D','ALL_UEs_F','energy_cost','task_collect','Energy_Efficent','UE_waiting_time','Covered_rate','task_executed','executed_rate','KL','Train_time','Testing_time'])
+        self._record_file.flush()
 
     def record_list(self):
-        ALL_UEs_D=ALL_UEs_F=executed_rate=task_executed=Covered_rate=sum_epoch=score=average_score=eps=success=lose=meet_threaten=loss=step=energy_cost=task_collect=UE_waiting_time=Energy_Efficent=0
-        list_len=len(self.infos)
-        sum_epoch=self.Trainer.epoch
-        score=self.score
-        average_score=self.score
-        loss+=0
-        for ue in self.UEs:
-            ALL_UEs_D+=ue.D_t 
-            ALL_UEs_F+=ue.F_t 
-            UE_waiting_time=ue.Caculate_wait_time
-
-        energy_cost=self.energy_cost_total
-        task_collect=self.task_collect
-        Energy_Efficent=self.task_collect/(self.energy_cost_total+0.001)
-        Covered_rate=len([UE for UE in self.UEs  if UE.Is_covered==1])/(len(self.UEs)+1)
-        task_executed=self.task_executed
-        executed_rate=(task_executed/(task_collect+1))
-        avg_KL = [0] 
-        self.CsvWriter.writerow([sum_epoch,self.Trainer.epoch,score,average_score,eps,success,lose,meet_threaten,loss,ALL_UEs_D,ALL_UEs_F,energy_cost,task_collect,Energy_Efficent,UE_waiting_time,Covered_rate,task_executed,executed_rate,avg_KL,self.Train_time,self.Testing_time])
-        self.infos=[]
+        info = self.last_episode_result
+        success = int(info.get('success', self.reach_goal))
+        lose = int(info.get('lose', self.terminal_info == 'lose'))
+        loss = float(info.get('loss', 0.0))
+        self.CsvWriter.writerow([
+            self.Trainer.epoch, info.get('episode', 0), self.score, self.score,
+            info.get('eps', 0.0), success, lose, self.collision_count, loss,
+            sum(ue.D_t for ue in self.UEs), sum(ue.F_t for ue in self.UEs),
+            self.energy_cost_total, self.task_collect,
+            self.task_collect / (self.energy_cost_total + 0.001),
+            self.ue_waiting_time, 0, self.task_executed,
+            self.task_executed / (self.task_collect + 1), 0,
+            self.Train_time, self.Testing_time])
+        self._record_file.flush()
+        self.infos = []
 
     def update(self,action):
         return self.update_function(action)
@@ -301,6 +346,7 @@ class UAV(BaseAgent):
         return re
 
     def reset(self,option=None):
+        self._reset_control_clock()
         if option=="local reset":
             self.Step=0
             self.score=0
@@ -347,6 +393,10 @@ class UAV(BaseAgent):
             self.cached_rtk_vel = None
             self.cached_lidar_grid = None
 
+        self.path = [[self.position.x, self.position.y, self.position.z]]
+        self.path_times = [0.0]
+        self.stuck_history.clear()
+
     def get_action(self,state,eps):
         start=time.time()
         action=self.Trainer.get_action(state,eps)
@@ -365,135 +415,80 @@ class UAV(BaseAgent):
     def Observation(self,env):
         pass
 
+    def _record_path(self, force=False):
+        if force or self.Control_step % self.path_record_period == 0:
+            if not self.path_times or self.path_times[-1] != self.sim_time:
+                self.path.append([self.position.x, self.position.y, self.position.z])
+                self.path_times.append(self.sim_time)
+
+    def _finish_update(self, reward, info):
+        if info in ('success', 'lose'):
+            self.done = True
+            self.terminal_info = info
+            self._record_path(force=True)
+            if info == 'success':
+                self.reach_goal = 1
+                self.target_step = self.Step
+                reward += 100.0 + max(0.0, self.base_duration_s - self.sim_time) / self.reference_dt
+                with open('path.csv', 'w', newline='') as output:
+                    csv.writer(output).writerows(self.path)
+            else:
+                reward -= 20.0
+        self.R_record.append(reward)
+        self.score += reward
+        self.total_score += reward
+        return reward, self.done, info
+
     def update_PathPlan(self, action):
-        if hasattr(action, 'cpu'): action = action.cpu().detach().numpy()
-        if hasattr(action, 'flatten'): action = action.flatten()
-        elif isinstance(action, list): action = np.array(action).flatten()
-            
-        steering_bias = action[0] if len(action) > 0 else 0
+        """One physical update: Step +2, displacement = speed * selected dt."""
+        if self.done:
+            return 0.0, True, self.terminal_info
+        if hasattr(action, 'cpu'):
+            action = action.cpu().detach().numpy()
+        action = np.asarray(action, dtype=float).reshape(-1)
+        steering_bias = float(action[0]) if len(action) else 0.0
         k_rep_obs = max(5.0, (float(action[1]) + 1.0) * 15.0) if len(action) > 1 else 15.0
         k_att = max(0.5, (float(action[2]) + 1.0) * 1.5) if len(action) > 2 else 1.0
-
-        global_r=0
-        
-        dist_to_goal = Eu_Loc_distance(self.position, self.goal)
-        if dist_to_goal < 15: 
-            self.done=True
-            global_r += 100 
-            # 成功抵達的剩餘步數獎勵，使用 original_max_step 計算
-            global_r += max(0, self.original_max_step - self.Step)
-            self.score += global_r
-            self.target_step = self.Step
-            self.reach_goal = 1
-            self.total_score += global_r
-            with open('path.csv', 'w', newline='') as csvfile:
-                csvwriter = csv.writer(csvfile)
-                for data in self.path:
-                    csvwriter.writerow(data)
-            return global_r, True, 'success'
-
-        self.Step+=1
-        old_position=copy.copy(self.position)
-        dis2goal_old = dist_to_goal
-        self.Step+=1
-        old_position=copy.copy(self.position)
-        dis2goal_old = dist_to_goal
-        
-        # ==========================================
-        # [修改] 綁定 RTK 頻率 (20Hz) 來判斷卡死
-        # 避免 480Hz 下時間間隔太短導致的微小位移被誤判為卡死
-        # ==========================================
-        if self.Step % self.steps_per_rtk == 0:
-            self.stuck_history.append(copy.copy(self.position))
-            
-            # 虛擬障礙物生成與成長邏輯
-            if self.check_is_stuck():
-                found_nearby = False
-                for v_obs in self.active_virtual_obstacles:
-                    if Eu_Loc_distance(self.position, v_obs['pos']) < 5.0: 
-                        v_obs['force'] = min(self.max_virtual_force, v_obs['force'] + self.virtual_force_growth)
-                        found_nearby = True
-                        break
-                
-                if not found_nearby:
-                    new_v_obs = {
-                        'pos': copy.copy(self.position),
-                        'force': self.virtual_force_initial 
-                    }
-                    self.active_virtual_obstacles.append(new_v_obs)
-                    self.Max_Step += self.bonus_steps_per_v_obs
-        # ==========================================        
-        # 虛擬障礙物生成與成長邏輯
-        if self.check_is_stuck():
-            found_nearby = False
-            for v_obs in self.active_virtual_obstacles:
-                if Eu_Loc_distance(self.position, v_obs['pos']) < 5.0: 
-                    # 套用 XML 參數：增長速度與最大值
-                    v_obs['force'] = min(self.max_virtual_force, v_obs['force'] + self.virtual_force_growth)
-                    found_nearby = True
-                    break
-            
-            if not found_nearby:
-                new_v_obs = {
-                    'pos': copy.copy(self.position),
-                    'force': self.virtual_force_initial # 套用 XML 參數：初始斥力
-                }
-                self.active_virtual_obstacles.append(new_v_obs)
-                
-                # 給予額外步數
-                self.Max_Step += self.bonus_steps_per_v_obs
-                
-        # 同步繪圖紀錄
-        self.virtual_obstacle_records = [
-            {'pos': v['pos'], 'max_force': v['force']} for v in self.active_virtual_obstacles
-        ]
-
+        self._refresh_sensors()
+        distance_before = Eu_Loc_distance(self.position, self.goal)
+        if distance_before < 15.0:
+            return self._finish_update(0.0, 'success')
+        old_position = copy.copy(self.position)
+        advance = getattr(self.env, 'advance_dynamic_obstacles', None)
+        if advance is not None:
+            advance(self.control_dt)
         total_force = self.cal_force(self.position, k_rep_obs, k_att)
-        
-        if total_force.x == 0 and total_force.y == 0:
-             apf_angle = calculate_angle(Loc(0,0,0), self.V_vector)
-        else:
-             apf_angle = calculate_angle(Loc(0,0,0), total_force)
-
-        final_angle = apf_angle + steering_bias * self.Steering_angle
-        
-        self.V_vector.x = self.Max_V * math.cos(final_angle)
-        self.V_vector.y = self.Max_V * math.sin(final_angle)
+        direction = self.V_vector if total_force.x == 0 and total_force.y == 0 else total_force
+        angle = calculate_angle(Loc(0, 0, 0), direction) + steering_bias * self.Steering_angle
+        self.V_vector = Loc(self.Max_V * math.cos(angle), self.Max_V * math.sin(angle), 0)
         self.V = self.Calc_V()
-        
-        self.position.x += self.V_vector.x
-        self.position.y += self.V_vector.y
+        self.position.x += self.V_vector.x * self.control_dt
+        self.position.y += self.V_vector.y * self.control_dt
         self.position.x = max(0, min(self.position.x, self.env.len))
         self.position.y = max(0, min(self.position.y, self.env.width))
-
-        if self.env.Threaten_rate(self.position) == 1:
-            global_r -= 5.0 
-            self.position = old_position 
-        
-        dis2goal_new = Eu_Loc_distance(self.position, self.goal)
-        self.path.append([self.position.x, self.position.y, self.position.z])
+        collision = self.env.Threaten_rate(self.position) > 0
+        if collision:
+            self.position = old_position
+            self.collision_count += 1
+        self.Step += 2
+        self.Control_step += 1
+        self.sim_time = self.Control_step * self.control_dt
+        self.path_len += Eu_Loc_distance(old_position, self.position)
         self.V_record.append(self.V)
-
-        progress = dis2goal_old - dis2goal_new
-        global_r += 1.0 * progress 
-
-        global_r -= 0.05 * abs(steering_bias)
-        global_r -= 0.1 
-        
-        self.R_record.append(global_r)
-        self.path_len += self.V
         self.Train_epoch += 1
-
+        self._refresh_sensors()
+        self._update_virtual_sources()
+        self._record_path()
+        distance_after = Eu_Loc_distance(self.position, self.goal)
+        reward = distance_before - distance_after
+        reward -= (0.1 + 0.05 * abs(steering_bias)) * self.control_dt / self.reference_dt
+        if collision:
+            reward -= 5.0 * self.control_dt / self.reference_dt
+        if distance_after < 15.0:
+            return self._finish_update(reward, 'success')
         if self.Step >= self.Max_Step:
-            self.done = True
-            global_r -= 20 
-            self.score += global_r
-            self.total_score += global_r
-            return global_r, True, 'lose'
-        else:
-            self.score += global_r
-            self.total_score += global_r
-            return global_r, False, 'normal'
+            return self._finish_update(reward, 'lose')
+        return self._finish_update(reward, 'normal')
 
     def get_ray_hit_distance(self, A, d_hat):
         T_min = float('inf')
@@ -529,63 +524,46 @@ class UAV(BaseAgent):
                     
         return T_min
 
-    def state_PathPlan(self):
-        grid_dim = 11
-        state_map = np.zeros((1, 1, 1, 126))
-        
-        # ==========================================
-        # 1. RTK (20Hz) 更新邏輯
-        # ==========================================
-        if self.Step % self.steps_per_rtk == 0 or self.cached_rtk_pos is None:
+    def _sample_lidar_grid(self):
+        # Preserve the existing ray-casting observation geometry and encoding.
+        grid_dim, stride = 11, 10.0
+        offset = (grid_dim // 2) * stride
+        grid = np.zeros(121)
+        for i in range(grid_dim):
+            for j in range(grid_dim):
+                dx, dy = i * stride - offset, j * stride - offset
+                distance = math.hypot(dx, dy)
+                if distance < 1e-3:
+                    continue
+                hit = self.get_ray_hit_distance(self.position, Loc(dx / distance, dy / distance, 0))
+                if hit > distance + stride / 2.0 - 1e-5:
+                    grid[i * grid_dim + j] = 0.0
+                elif hit >= distance - stride / 2.0:
+                    grid[i * grid_dim + j] = 1.0
+                else:
+                    grid[i * grid_dim + j] = -1.0
+        return grid
+
+    def _refresh_sensors(self):
+        tick = self.Control_step
+        if (self.cached_rtk_pos is None or tick % self.steps_per_rtk == 0) and self._last_rtk_tick != tick:
             self.cached_rtk_pos = copy.copy(self.position)
             self.cached_rtk_vel = copy.copy(self.V_vector)
-            
-        rtk_pos = self.cached_rtk_pos
-        rtk_vel = self.cached_rtk_vel
-        
-        # 將「暫存的」RTK 數據餵給神經網路
-        state_map[0, 0, 0, 0] = (self.goal.x - rtk_pos.x) / 500.0
-        state_map[0, 0, 0, 1] = (self.goal.y - rtk_pos.y) / 500.0
-        state_map[0, 0, 0, 2] = (self.goal.z - rtk_pos.z) / 100.0
-        
-        state_map[0, 0, 0, 3] = rtk_vel.x / self.Max_V
-        state_map[0, 0, 0, 4] = rtk_vel.y / self.Max_V
-        
-        # ==========================================
-        # 2. LiDAR (10Hz) 更新邏輯
-        # ==========================================
-        if self.Step % self.steps_per_lidar == 0 or self.cached_lidar_grid is None:
-            stride = 10.0
-            offset = (grid_dim // 2) * stride
-            lidar_array = np.zeros(121)
-            
-            idx = 0
-            for i in range(grid_dim):
-                for j in range(grid_dim):
-                    dx = i * stride - offset
-                    dy = j * stride - offset
-                    
-                    L = math.sqrt(dx**2 + dy**2)
-                    
-                    if L < 1e-3:
-                        lidar_array[idx] = 0.0
-                    else:
-                        d_hat = Loc(dx / L, dy / L, 0)
-                        # 注意：LiDAR 掃描的基準點必須是當前真實位置
-                        T_min = self.get_ray_hit_distance(self.position, d_hat)
-                        
-                        if T_min > L + stride / 2.0 - 1e-5:
-                            lidar_array[idx] = 0.0 
-                        elif T_min >= L - stride / 2.0:
-                            lidar_array[idx] = 1.0 
-                        else:
-                            lidar_array[idx] = -1.0 
-                            
-                    idx += 1
-            # 儲存這一次掃描的結果
-            self.cached_lidar_grid = lidar_array
-            
-        # 將「暫存的」LiDAR 數據餵給神經網路
-        state_map[0, 0, 0, 5:126] = self.cached_lidar_grid
-                
-        return copy.copy(state_map[0, 0, 0, :])
+            self._last_rtk_tick = tick
+            self.rtk_updates += 1
+            self.stuck_history.append(copy.copy(self.cached_rtk_pos))
+        if (self.cached_lidar_grid is None or tick % self.steps_per_lidar == 0) and self._last_lidar_tick != tick:
+            self.cached_lidar_grid = self._sample_lidar_grid()
+            self._last_lidar_tick = tick
+            self.lidar_updates += 1
+
+    def state_PathPlan(self):
+        self._refresh_sensors()
+        pos, velocity = self.cached_rtk_pos, self.cached_rtk_vel
+        state = np.empty(126)
+        state[:5] = [(self.goal.x - pos.x) / 500.0,
+                     (self.goal.y - pos.y) / 500.0,
+                     (self.goal.z - pos.z) / 100.0,
+                     velocity.x / self.Max_V, velocity.y / self.Max_V]
+        state[5:] = self.cached_lidar_grid
+        return state

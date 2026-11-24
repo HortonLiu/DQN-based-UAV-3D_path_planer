@@ -15,6 +15,13 @@
         <print_loop>2</print_loop>
         <!-- if u dont want single UAV, change this -->
         <num_UAV>1</num_UAV>
+        <!-- Six of the existing 26 cylinders move; all speeds are m/s. -->
+        <Dynamic_Obstacles>
+            <enabled>1</enabled>
+            <speed>4.0</speed>
+            <!-- Default reciprocal endpoints: intersections with the 0..500 map.
+                 Optional half_range (meters) limits travel around each initial center. -->
+        </Dynamic_Obstacles>
         <Agent>
             <xml_path_agent>./config/UAV.xml</xml_path_agent>
             <Trainer>

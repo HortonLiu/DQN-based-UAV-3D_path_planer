@@ -19,8 +19,8 @@ class EnvFactory():
             module=importlib.import_module(Env_Type)  #导入自定义智能体模型
             EnvEntity = getattr(module, Env_Type)(param)  #构造目标类
         except Exception as e:
-            print(e.args)  #输出异常信息
-            return None
+            raise RuntimeError("Cannot initialize environment %r: %s" %
+                               (param.get('Env_Type'), e)) from e
         else:
             return EnvEntity
 

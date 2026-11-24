@@ -1,7 +1,8 @@
-numpy==1.21
-tqdm
-pyecharts
-xmltodict
-matplotlib
-mysql-connector-python
-tensorboard
+torch==2.5.1
+numpy==1.26.4
+tqdm==4.70.1
+pyecharts==2.1.0
+xmltodict==1.0.4
+matplotlib==3.9.4
+mysql-connector-python==9.4.0
+tensorboard==2.21.0

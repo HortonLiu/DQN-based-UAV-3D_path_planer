@@ -18,7 +18,7 @@ class AgentFactory():
         
         try:
             Agent_Type=param.get('Agent_Type')
-            module=importlib.import_module(Agent_Type)  #导入自定义智能体模型
+            module=importlib.import_module(param.get("Agent_Module", Agent_Type))  #导入自定义智能体模型
             AgentEntity = getattr(module, Agent_Type)(param,env)  #构造目标类
         except Exception as e:
             print(e.args)  #输出异常信息

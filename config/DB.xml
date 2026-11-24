@@ -1,9 +1,0 @@
-<DB>
-    <host>localhost</host>
-    <user>root</user>
-    <password>yh5182072</password>
-    <database>project2</database>
-    <tables>
-        <table>tables</table>
-    </tables>
-</DB>

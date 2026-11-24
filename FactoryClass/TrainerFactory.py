@@ -17,7 +17,7 @@ class TrainerFactory():
             module=importlib.import_module(Trainer_Type)  #导入自定义智能体模型
             TrainerEntity = getattr(module, Trainer_Type)(param)  #构造目标类
         except Exception as e:
-            print(e.args)  #输出异常信息
-            return None
+            raise RuntimeError("Cannot initialize trainer %r: %s" %
+                               (param.get('Trainer_Type'), e)) from e
         else:
             return TrainerEntity

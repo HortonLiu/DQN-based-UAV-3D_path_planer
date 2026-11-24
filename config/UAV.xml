@@ -1,5 +1,6 @@
 <Agent>
     <Agent_Type>UAV</Agent_Type>
+    <Agent_Module>UAV_Single_RL+VOAPF S2R</Agent_Module>
     <name>UAV_</name>
     <update_function_name>update_PathPlan</update_function_name>
     <state_function_name>state_PathPlan</state_function_name>
@@ -18,16 +19,18 @@
     <R>50</R>
     <R_comm>75</R_comm>
     <Acceration>5</Acceration>
-    <!-- 900 -->
-    <Max_Step>432000</Max_Step>
+    <!-- One-second reference budget: 1200 s = 576000 updates = 1152000 Step units. -->
+    <Max_Step>1200</Max_Step>
 
     <stuck_step_limit>10</stuck_step_limit>
+    <!-- Ten simulated seconds, sampled at 20 Hz (201 endpoint-inclusive positions). -->
     <stuck_distance_threshold>3.0</stuck_distance_threshold>
     <virtual_force_initial>10.0</virtual_force_initial>
     <virtual_force_growth>2.0</virtual_force_growth>
     <!-- max_virtual_force = 40.0 (original)-->
     <max_virtual_force>20.0</max_virtual_force                                                                                    >
     <bonus_steps_per_v_obs>50</bonus_steps_per_v_obs>
+    <!-- Fifty simulated seconds = 24000 updates = 48000 Step units per new source. -->
     <max_virtual_obstacle>200</max_virtual_obstacle>
 
     <sub_granularity>30</sub_granularity>

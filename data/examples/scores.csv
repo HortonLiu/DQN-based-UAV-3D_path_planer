@@ -1,0 +1,3 @@
+scene,hardware_hz_enabled,control_hz,control_dt_s,uav_speed_m_s,control_updates,step,simulation_time_s,path_length_m,remaining_goal_distance_m,success,failed,meet_threaten,virtual_obstacles,score,trajectory_json
+static,0,1,1.0,1.0,2,4.0,2.0,1.9999999999999942,530.1462159661637,0,1,0,0,-18.343084371219902,static-1hz-v1.json
+mixed,1,480,0.0020833333333333333,4.0,960,1920.0,2.0,7.99999999999968,524.3203556745136,0,1,0,0,-12.520934035082966,mixed-480hz-v4.json

@@ -1,11 +1,33 @@
-# Ignore all .csv files
-*.csv
+# Local Python environments, caches, and editor settings
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.vscode/
+.DS_Store
+Thumbs.db
 
-# Ignore all .pyc files
-*.pyc
+# Local configuration and working files
+**/config/DB.xml
+/.env
+/.env.*
+/tmp/
+/dist/
+**/Agents/*備份*.py
+**/Envs/*備份*.py
 
-*.cpython-39
+# Generated simulation output and model weights
+logs/
+**/DataBase/experience/
+*.pth
+*.pt
+*.ckpt
+*.safetensors
 
-*.html
-
-config/DB.xml
+# Legacy examples awaiting provenance and redistribution checks
+path.csv
+/path1.gif
+/path2.gif
+/map_image.jpg
+/DQN无人机航迹规划系统框架图.jpg

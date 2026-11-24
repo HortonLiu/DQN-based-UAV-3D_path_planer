@@ -1,5 +1,7 @@
 <Trainer>
     <Trainer_Type>SAC_Trainer</Trainer_Type>
+    <!-- Time-consistent simulation uses separate weights from the old short episodes. -->
+    <checkpoint_dir>Mod/S2R_time_consistent</checkpoint_dir>
     <Is_Train>1</Is_Train>
     <IsPriority_Replay>0</IsPriority_Replay>
     <actor>

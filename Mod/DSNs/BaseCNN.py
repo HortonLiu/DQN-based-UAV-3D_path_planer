@@ -1,3 +1,12 @@
+# Portions adapted from Hands-on Reinforcement Learning (network examples, chapters 7, 8, 13 and 14).
+# https://github.com/boyu-ai/Hands-on-RL/tree/4a151a4bfeafd3061c0e0ef59bece25ca8fb2bf8
+# RLGF added configurable architectures for its models.
+# Apache-2.0 terms are in licenses/Hands-on-RL-LICENSE.
+
+# Convolutional Q-networks adapted from Adam Paszke's PyTorch DQN tutorial.
+# https://github.com/pytorch/tutorials/blob/e7b036a579b06c8baab2250cb4c1903740c6f6f7/intermediate_source/reinforcement_q_learning.py
+# BSD-3-Clause terms are in licenses/PyTorch-Tutorials-LICENSE.
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F

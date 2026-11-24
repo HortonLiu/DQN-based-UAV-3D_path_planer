@@ -1,3 +1,8 @@
+# Portions adapted from Hands-on Reinforcement Learning (PPO and SAC examples, chapters 12 and 14).
+# https://github.com/boyu-ai/Hands-on-RL/tree/4a151a4bfeafd3061c0e0ef59bece25ca8fb2bf8
+# RLGF added configurable training and checkpointing.
+# Apache-2.0 terms are in licenses/Hands-on-RL-LICENSE.
+
 #PPO算法训练器
 from BaseClass.BaseTrainer import *
 from BaseClass.CalMod import *

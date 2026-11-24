@@ -1,3 +1,12 @@
+# Portions adapted from Hands-on Reinforcement Learning (replay buffer example in chapter 7).
+# https://github.com/boyu-ai/Hands-on-RL/tree/4a151a4bfeafd3061c0e0ef59bece25ca8fb2bf8
+# RLGF added separate storage and prioritized sampling options.
+# Apache-2.0 terms are in licenses/Hands-on-RL-LICENSE.
+
+# Replay memory documentation and code adapted from Adam Paszke's PyTorch DQN tutorial.
+# https://github.com/pytorch/tutorials/blob/e7b036a579b06c8baab2250cb4c1903740c6f6f7/intermediate_source/reinforcement_q_learning.py
+# BSD-3-Clause terms are in licenses/PyTorch-Tutorials-LICENSE.
+
 ######################################################################
 # Replay Memory
 # -------------

@@ -1,0 +1,6 @@
+# Preserve the upstream bytes of vendored bundles on all platforms.
+/assets/pyecharts/*.js -text
+
+# Match the SHA-256 values recorded in the historical data manifest.
+/data/historical/**/*.csv -text
+/data/historical/**/*.json -text

@@ -1,217 +1,330 @@
-###simulator.py
-##功能：所有类别的顶端控制器，实现各类别参数的调控，
-##并通过参数的调控生成不同的工厂类
-import time
-from BaseClass.CalMod import *
-from FactoryClass.EnvFactory import *
-import sys
-import numpy as np
-import os
-from tqdm import tqdm
-root=os.path.dirname(os.path.abspath(__file__))
-sys.path.append(os.path.dirname(os.path.abspath(__file__)) + '/../')
-sys.path.append(os.path.dirname(os.path.abspath(__file__)) + '/../config/')
-sys.path.append(os.path.dirname(os.path.abspath(__file__)) + '/../Agents') 
-sys.path.append(os.path.dirname(os.path.abspath(__file__)) + '/../BaseClass')
-import csv 
+"""Choose hardware timing, dynamic obstacles and UAV speed, then start S2R."""
+import argparse
+import csv
 import datetime
-from BaseClass.BaseCNN import *
-cur_time=datetime.datetime.now()
-cur_time= cur_time.strftime('%m_%d_%Y(%H_%M_%S)')
+import math
+import os
+from pathlib import Path
 import random
-# 设置全局随机种子，可以使用任何整数作为种子值
-seed_value = 42  # 这里使用42作为种子值，您可以选择任何整数
-random.seed(seed_value)
-os.environ['PYTHONHASHSEED'] = str(seed_value)
-np.random.seed(seed_value)
-torch.manual_seed(seed_value)
-torch.cuda.manual_seed(seed_value)
-torch.cuda.manual_seed_all(seed_value)
-torch.backends.cudnn.deterministic = True
-torch.backends.cudnn.benchmark = False
+import sys
+import time
 
-from torch.utils.tensorboard import SummaryWriter # 加入這行
+ROOT = Path(__file__).resolve().parent
+root = str(ROOT)
+sys.path.insert(0, root)
+try:
+    import numpy as np
+    import torch
+    from torch.utils.tensorboard import SummaryWriter
+    from tqdm import tqdm
+    from BaseClass.CalMod import XML2Dict
+    from FactoryClass.EnvFactory import EnvFactory
+except ModuleNotFoundError as error:
+    raise SystemExit('Missing dependency: {}. Install with:\n  "{}" -m pip install -r "{}"'.format(
+        error.name, sys.executable, ROOT / 'requirements.txt')) from error
 
-#设置所有随机数种子
-    
 
-class simulator():
-    def __init__(self) -> None:
-        #DQN训练相关参数(默认)
-        self.TARGET_UPDATE = 10   #Q网络更新周期
-        self.num_episodes = 150000  #训练周期长度
-        self.print_every = 10 #训练记录周期
-        self.min_eps = 0.1   #最小贪心概率
-        self.max_eps_episode =1000  #最大贪心次数
-        self.EnvFactory=EnvFactory()  #实例化工厂类
-        self.epoch=0      #当前训练轮数
-        self.env=None           #实例化环境
-        self.result_path='logs/score_%s.csv' %cur_time
-        self.CsvWriter=None   #csv写入类
-        self.Max_score=-9999999999  #记录最高得分
-        # === [新增] 初始化 TensorBoard 寫入器 ===
-        # log_dir 指定 TensorBoard 檔案存放的資料夾，建議加上時間戳記區分不同次訓練
-        self.writer = SummaryWriter(log_dir='logs/tensorboard_%s' % cur_time)
-        # ======================================
-        #仿真模拟控制器信号
-        self.stat=1   #1:开始 2：暂停 3：停止
+class simulator:
+    CSV_FIELDS = [
+        'sum_Episode', 'Episode', ' Score', ' Avg.Score', 'eps-greedy',
+        'success', 'failed', 'meet_threaten', 'loss', 'step',
+        'avg_trainning_time', 'avg_testing_time', 'total_time',
+        'timestamp', 'control_updates', 'simulation_time_s', 'path_length_m',
+        'virtual_obstacles', 'episode_budget_s', 'remaining_goal_distance_m', 'html_path',
+        'hardware_hz_enabled', 'control_hz', 'control_dt_s',
+        'dynamic_obstacles_enabled', 'scene', 'uav_speed_m_s',
+    ]
 
-        #自动载入配置文件，进行初始化
-        self.Init_From_XML()
+    def __init__(self, episodes=None, max_seconds=None, no_train=False, config_path=None,
+                 scene='static', hardware_hz=True, uav_speed=None):
+        if scene not in ('static', 'mixed'):
+            raise ValueError('scene must be static or mixed')
+        self.scene = scene
+        if hardware_hz not in (0, 1):
+            raise ValueError('hardware_hz must be 0 or 1')
+        self.hardware_hz_enabled = bool(hardware_hz)
+        if uav_speed is not None and uav_speed not in (1, 4):
+            raise ValueError('uav_speed must be 1 or 4 m/s')
+        self.uav_speed = None if uav_speed is None else float(uav_speed)
+        os.chdir(ROOT)
+        random.seed(42)
+        np.random.seed(42)
+        torch.manual_seed(42)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(42)
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+        self.EnvFactory = EnvFactory()
+        self.epoch = 0
+        self.env = None
+        self.stat = 1
+        self.Max_score = float('-inf')
+        self.infos = []
+        self.executed_time = 0.0
+        self.writer = None
+        self.CsvWriter = None
+        self._result_file = None
+        self.no_train = bool(no_train)
+        speed_label = 'Vxml' if self.uav_speed is None else 'V{:g}'.format(self.uav_speed)
+        stamp = '{}_{}_{}Hz_{}_{}'.format(
+            datetime.datetime.now().strftime('%m_%d_%Y(%H_%M_%S_%f)'),
+            self.scene, 480 if self.hardware_hz_enabled else 1, speed_label, os.getpid())
+        logs = ROOT / 'logs'
+        logs.mkdir(parents=True, exist_ok=True)
+        self.result_path = str(logs / ('score_' + stamp + '.csv'))
+        try:
+            self.Init_From_XML(config_path)
+            if episodes is not None:
+                self.num_episodes = int(episodes)
+            if self.num_episodes < 1:
+                raise ValueError('num_episodes must be positive')
+            for agent in self.env.Agents:
+                if max_seconds is not None:
+                    seconds = float(max_seconds)
+                    if not math.isfinite(seconds) or seconds <= 0:
+                        raise ValueError('max_seconds must be positive and finite')
+                    agent.set_episode_duration(seconds)
+                if self.no_train:
+                    agent.Trainer.Is_Train = 0
+            self.Init_Record_Mod()
+            self.writer = SummaryWriter(log_dir=str(logs / ('tensorboard_' + stamp)))
+        except Exception:
+            self.close()
+            raise
 
-        #训练结果记录模块初始化
-        self.Init_Record_Mod()
-
-        self.infos=[]   #训练的反馈列表
-        #执行时间统计
-        self.executed_time=0
-        
+    def Init_From_XML(self, XML_path=None):
+        default_config = 'PathPlan_City_Static.xml' if self.scene == 'static' else 'PathPlan_City.xml'
+        path = Path(XML_path) if XML_path else ROOT / 'config' / default_config
+        data = XML2Dict(str(path))
+        if not data or 'simulator' not in data:
+            raise ValueError('Missing simulator configuration in {}'.format(path))
+        config = data['simulator']
+        self.record_epo = int(config.get('record_epo', 10))
+        self.num_episodes = int(config.get('num_episodes', 1000))
+        self.max_eps_episode = int(config.get('max_eps_episode', 1000))
+        self.min_eps = float(config.get('min_eps', 0.1))
+        self.TARGET_UPDATE = int(config.get('TARGET_UPDATE', 10))
+        if not config.get('env'):
+            raise ValueError('Missing env configuration in {}'.format(path))
+        # Set timing before creating the UAV, sensors, budgets and trainer.
+        config['env']['Hardware_Hz_Enabled'] = int(getattr(self, 'hardware_hz_enabled', True))
+        if getattr(self, 'uav_speed', None) is not None:
+            config['env']['UAV_Speed_M_S'] = self.uav_speed
+        self.env = self.EnvFactory.Create_Env(config['env'])
+        if self.env is None or not self.env.Agents:
+            raise RuntimeError('Cannot initialize the configured environment and UAV')
+        for agent in self.env.Agents:
+            if getattr(agent, 'Trainer', None) is None:
+                raise RuntimeError('Trainer initialization failed for {!r}; check the trainer configuration and checkpoint files'.format(
+                    getattr(agent, 'name', 'UAV')))
 
     def Init_Record_Mod(self):
-        #初始化训练记录模块
-        try:
-            file=open(self.result_path,'a+',newline="")
-            self.CsvWriter=csv.writer(file)
-            self.CsvWriter.writerow(["sum_Episode","Episode"," Score"," Avg.Score","eps-greedy","success","failed","meet_threaten",'loss','step','avg_trainning_time','avg_testing_time','total_time'])
-        except Exception as e:
-            print(e)
-    
-    def Init_From_XML(self,XML_path=root+'/config/PathPlan_City.xml'):
-        #根据配置文件初始化模拟器参数,根据工厂类生成 env类
-        try:
-            config_dict=XML2Dict(XML_path)   #解析xml文件
-            if config_dict!=None: 
-                config_dict=config_dict.get('simulator')
-                self.record_epo=int(config_dict.get('record_epo'))
-                self.num_episodes=int(config_dict.get('num_episodes'))
-                self.max_eps_episode=int(config_dict.get('max_eps_episode'))
-                self.min_eps=float(config_dict.get('min_eps'))
-                self.num_episodes=int(config_dict.get('num_episodes'))
-                self.TARGET_UPDATE=int(config_dict.get('TARGET_UPDATE'))
-                # #记录存放路径
-                # if config_dict.get('record_path')!= None:
-                #     self.result_path=config_dict.get('record_path')
+        self._result_file = open(self.result_path, 'w', newline='', encoding='utf-8')
+        self.CsvWriter = csv.writer(self._result_file)
+        self.CsvWriter.writerow(self.CSV_FIELDS)
+        self._result_file.flush()
 
-                #创建环境类
-                env_dict=config_dict.get('env')
-                self.env=self.EnvFactory.Create_Env(env_dict)  
-        except Exception as e:
-            print(e.args)  #输出异常信息
-            return None
-
-    def StartAndTrain(self,flag=0): 
-        for i in range(10):
-            with tqdm(total=int(self.num_episodes / 10), desc='Iteration %d' % i) as pbar:
-                for i_episode in range(int(self.num_episodes / 10)):
-                    if self.stat==2:
-                        continue   #暂停
-                    elif self.stat==3: 
-                        return      #停止训练与模拟
-                    elif self.stat==1: 
-                        if flag==0:
-                            self.epoch+=1
-                            eps_rate=self.epsilon_annealing()       #获取贪心概率
-                            epside_start=time.time()
-                            info=self.env.run_eposide(eps_rate)   #计算机随机生成场景进行训练
-                            epside_end=time.time()
-                            self.executed_time+=(epside_end-epside_start)
-                            self.infos.append(info)    #添加反馈列表
-                            # === [新增] 將數據寫入 TensorBoard ===
-                            # 格式: add_scalar('圖表標題', 數值, X軸(通常是 Epoch 或 Step))
-                            if self.writer:
-                                current_step = self.num_episodes / 10 * i + i_episode + 1
-                                self.writer.add_scalar('Train/Average_Score', info['average_score'], current_step)
-                                self.writer.add_scalar('Train/Loss', info['loss'], current_step)
-                                self.writer.add_scalar('Train/Success_Rate', info['success'], current_step)
-                                self.writer.add_scalar('Train/Collision', info['meet_threaten'], current_step)
-                            # ===================================
-                            if self.Max_score<info['average_score']:
-                                self.Max_score=info['average_score']
-                            self.record_list()  #对缓存列表进行统计
-                        else:
-                            self.env.run_XML_scene()   #根据现有的场景进行训练
-                        #更新进度条
-                        if (i_episode + 1) % 2 == 0:
-                            pbar.set_postfix({
-                                'episode':
-                                '%d' % (self.num_episodes / 10 * i + i_episode + 1),
-                                'MAX return':
-                                '%.3f' % self.Max_score,
-                                'return':
-                                '%.3f' % info['average_score'],
-                                'loss':
-                                '%.3f' % info['loss']
-                            })
-                        pbar.update(1)
-
-    def epsilon_annealing(self):
-        #返回贪心概率
-        slope = (self.min_eps - 1.0) / (self.max_eps_episode+0.1)
-        ret_eps = max(slope * self.epoch + 1.0, self.min_eps)
-        return ret_eps        
-
-    def Update_target(self):
-        #更新双网络结构的网络参数
-        self.env.Trainer.hard_update()
+    @staticmethod
+    def _number(value):
+        return value.item() if hasattr(value, 'item') else value
 
     def record_list(self):
-        sum_epoch=score=average_score=eps=success=lose=meet_threaten=loss=step=0
-        self.infos=[]  #清空列表
-        traing_time=0
-        testing_time=0
-        for uav in self.env.Agents:
-            traing_time+=uav.Train_time
-            testing_time+=uav.Testing_time
-        traing_time=traing_time/len(self.env.Agents)
-        testing_time=testing_time/len(self.env.Agents)
-        self.CsvWriter.writerow([sum_epoch,self.epoch,score,average_score,eps,success,lose,meet_threaten,loss,step,traing_time,testing_time,self.executed_time])
+        if not self.infos:
+            return
+        agents = self.env.Agents
+        agent = agents[0]
+        train_time = sum(item.Train_time for item in agents) / len(agents)
+        testing_time = sum(item.Testing_time for item in agents) / len(agents)
+        for info in self.infos:
+            distance = math.dist(
+                (agent.position.x, agent.position.y, agent.position.z),
+                (agent.goal.x, agent.goal.y, agent.goal.z))
+            row = [
+                info.get('sum_epoch', agent.Trainer.epoch), self.epoch,
+                info.get('score', agent.score), info.get('average_score', agent.score),
+                info.get('eps', 0), info.get('success', 0), info.get('lose', 0),
+                info.get('meet_threaten', 0), info.get('loss', 0), info.get('step', agent.Step),
+                train_time, testing_time, self.executed_time,
+                datetime.datetime.now().isoformat(timespec='seconds'),
+                info.get('control_updates', agent.Control_step),
+                info.get('simulation_time_s', agent.sim_time),
+                info.get('path_len', agent.path_len),
+                info.get('virtual_obstacle_count', len(agent.active_virtual_obstacles)),
+                info.get('active_step_budget', agent.Max_Step) / (2.0 * agent.control_hz),
+                info.get('remaining_goal_distance_m', distance),
+                info.get('html_path', getattr(self.env, 'last_render_path', '')),
+                int(getattr(agent, 'hardware_hz_enabled', agent.control_hz == 480)),
+                agent.control_hz, getattr(agent, 'control_dt', 1.0 / agent.control_hz),
+                int(bool(getattr(self.env, 'dynamic_enabled', False))),
+                'mixed' if getattr(self.env, 'dynamic_enabled', False) else 'static',
+                getattr(agent, 'Max_V', ''),
+            ]
+            self.CsvWriter.writerow([self._number(value) for value in row])
+            self._result_file.flush()
+        self.infos.clear()
 
-    def record(self,info=None):
-        #将运行结果进行记录
-        if info!=None:
-            self.CsvWriter.writerow([info['sum_epoch'],self.epoch,info['score'],info['average_score'],info['eps'],info['success'],info['lose'],info['meet_threaten'],info['loss']])
+    def record(self, info=None):
+        if info is not None:
+            self.infos.append(info)
+            self.record_list()
 
-    def Sim(self):
-        #根据场景配置文件进行仿真模拟
-        pass
-    def Reset_Env(self):
-        #随机重置训练环境
-        pass 
-    def Reset_Env_XML(self):
-        #根据XML重置训练环境
-        pass
-    #设置单次训练批量大小 
-    def Set_Batch_Size(self,bath_size): 
-        self.BATCH_SIZE=bath_size
-    #设置DQN的折扣率
-    def Set_Gamma(self, gamma):
-        self.gamma = gamma
-    #设置训练学习率
-    def Set_Learning_Rate(self, learning_rate):
-        self.LEARNING_RATE = learning_rate
-    #设置target网络更新周期
-    def Set_Target_Update(self, target_update):
-        self.TARGET_UPDATE = target_update
-    #设置训练周期长度
-    def Set_Num_Episodes(self, num_episodes):
-        self.num_episodes = num_episodes
-    #设置训练记录周期间隔
-    def Set_Print_Every(self, print_every):
-        self.print_every = print_every
-    #设置最小贪心概率 
-    def Set_Min_Eps(self, min_eps):
-        self.min_eps = min_eps
-    #设置最大贪心次数
-    def Set_Max_Eps_Episode(self, max_eps_episode):
-        self.max_eps_episode = max_eps_episode
-    #设置状态空间大小
-    def Set_Space_Dim(self, space_dim):
-        self.space_dim = space_dim
-    #设置动作空间大小
-    def Set_Action_Dim(self, action_dim):
-        self.action_dim = action_dim
-        
-if __name__=="__main__":
-    sim=simulator()
-    print(sim.env)
-    sim.StartAndTrain()
+    def epsilon_annealing(self):
+        slope = (self.min_eps - 1.0) / (self.max_eps_episode + 0.1)
+        return max(slope * self.epoch + 1.0, self.min_eps)
+
+    def print_configuration(self):
+        agent = self.env.Agents[0]
+        # Motion is configured when the first episode resets its scene.
+        moving_count = 6 if self.env.dynamic_enabled else 0
+        obstacle_speed = self.env.dynamic_speed if self.env.dynamic_enabled else 0.0
+        print('Timing mode: {}'.format(
+            'hardware 480 Hz' if agent.hardware_hz_enabled else 'one second per update'), flush=True)
+        print('Control: {:g} Hz | each update: Step +2 | counter rate: {:g}/s'.format(
+            agent.control_hz, 2 * agent.control_hz), flush=True)
+        print('UAV speed: {:g} m/s'.format(agent.Max_V), flush=True)
+        print('Displacement/update: UAV {:.9f} m | moving obstacle {:.9f} m'.format(
+            agent.Max_V * agent.control_dt, obstacle_speed * agent.control_dt), flush=True)
+        print('Episode budget: {:g} s = {:g} Step units | scene: {} static + {} moving'.format(
+            agent.base_duration_s, agent.original_max_step,
+            len(self.env.buildings) - moving_count, moving_count), flush=True)
+        print('Sensors: RTK {:g} Hz | LiDAR {:g} Hz | stuck window {:g} s'.format(
+            agent.freq_rtk, agent.freq_lidar, agent.stuck_window_seconds), flush=True)
+        print('SAC decision/replay interval: {:g} s | training: {}'.format(
+            agent.reference_dt, 'off' if self.no_train else 'on'), flush=True)
+        print('Checkpoints: {}'.format(agent.Trainer.checkpoint_dir), flush=True)
+        print('Scores: {}'.format(self.result_path), flush=True)
+        print('HTML: {}'.format(ROOT / 'DataBase' / 'experience'), flush=True)
+
+    def StartAndTrain(self, flag=0):
+        with tqdm(total=self.num_episodes, desc='Simulation', unit='episode', ascii=True) as progress:
+            for _ in range(self.num_episodes):
+                while self.stat == 2:
+                    time.sleep(0.1)
+                if self.stat == 3:
+                    break
+                self.epoch += 1
+                if flag:
+                    self.env.run_XML_scene()
+                    progress.update(1)
+                    continue
+                started = time.perf_counter()
+                info = self.env.run_eposide(self.epsilon_annealing())
+                self.executed_time += time.perf_counter() - started
+                self.infos.append(info)
+                self.Max_score = max(self.Max_score, float(info['average_score']))
+                if self.writer:
+                    for name, key in [('Average_Score', 'average_score'), ('Loss', 'loss'),
+                                      ('Success_Rate', 'success'), ('Collision', 'meet_threaten')]:
+                        self.writer.add_scalar('Train/' + name, self._number(info[key]), self.epoch)
+                    self.writer.add_scalar('Simulation/Time_s', self.env.Agents[0].sim_time, self.epoch)
+                    self.writer.flush()
+                self.record_list()
+                progress.set_postfix(episode=self.epoch, score='{:.3f}'.format(info['average_score']),
+                                     success=info['success'], sim_s='{:.2f}'.format(self.env.Agents[0].sim_time))
+                progress.update(1)
+
+    def close(self):
+        if self.writer is not None:
+            self.writer.close()
+            self.writer = None
+        if self._result_file is not None:
+            self._result_file.close()
+            self._result_file = None
+        for agent in getattr(self.env, 'Agents', []):
+            record = getattr(agent, '_record_file', None)
+            if record is not None and not record.closed:
+                record.close()
+
+    def Update_target(self): self.env.Trainer.hard_update()
+    def Set_Batch_Size(self, value): self.BATCH_SIZE = value
+    def Set_Gamma(self, value): self.gamma = value
+    def Set_Learning_Rate(self, value): self.LEARNING_RATE = value
+    def Set_Target_Update(self, value): self.TARGET_UPDATE = value
+    def Set_Num_Episodes(self, value): self.num_episodes = value
+    def Set_Print_Every(self, value): self.print_every = value
+    def Set_Min_Eps(self, value): self.min_eps = value
+    def Set_Max_Eps_Episode(self, value): self.max_eps_episode = value
+    def Set_Space_Dim(self, value): self.space_dim = value
+    def Set_Action_Dim(self, value): self.action_dim = value
+
+
+def positive_integer(value):
+    number = int(value)
+    if number < 1:
+        raise argparse.ArgumentTypeError('must be a positive integer')
+    return number
+
+
+def positive_seconds(value):
+    number = float(value)
+    if not math.isfinite(number) or number <= 0:
+        raise argparse.ArgumentTypeError('must be positive and finite')
+    return number
+
+
+def prompt_choice(question, choices):
+    """Validate a startup choice before creating the environment or trainer."""
+    accepted = {str(value): value for value in choices}
+    while True:
+        try:
+            answer = input(question).strip()
+        except EOFError as error:
+            raise ValueError(
+                'No startup selection received. Enter one of {}, or specify '
+                '--hardware-hz 0|1 --scene static|mixed --uav-speed 1|4 '
+                'for a noninteractive run.'.format(', '.join(accepted))) from error
+        if answer in accepted:
+            return accepted[answer]
+        print('請輸入 {}。'.format(' 或 '.join(accepted)), flush=True)
+
+
+def prompt_binary(question):
+    return prompt_choice(question, (0, 1))
+
+
+def prompt_uav_speed(question):
+    return prompt_choice(question, (1, 4))
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--hardware-hz', type=int, choices=(0, 1), default=None,
+                        help='1: 480 Hz; 0: one second per update; prompt when omitted')
+    parser.add_argument('--scene', choices=('static', 'mixed'), default=None,
+                        help='static: 26 fixed; mixed: 20 fixed + 6 moving; prompt when omitted')
+    parser.add_argument('--uav-speed', type=int, choices=(1, 4), default=None,
+                        help='UAV speed in m/s: 1 or 4; prompt when omitted')
+    parser.add_argument('--episodes', type=positive_integer, help='override configured episode count')
+    parser.add_argument('--max-seconds', type=positive_seconds, help='override episode simulation duration')
+    parser.add_argument('--no-train', action='store_true', help='simulate without optimizing or saving weights')
+    args = parser.parse_args()
+    sim = None
+    try:
+        hardware_hz = args.hardware_hz
+        if hardware_hz is None:
+            hardware_hz = prompt_binary('是否加入硬體 Hz 模擬？(1: 480 Hz；0: 每次更新 1 秒)：')
+        scene = args.scene
+        if scene is None:
+            dynamic = prompt_binary('是否加入動態障礙物？(1: 20 靜態 + 6 動態；0: 26 個全靜態)：')
+            scene = 'mixed' if dynamic else 'static'
+        uav_speed = args.uav_speed
+        if uav_speed is None:
+            uav_speed = prompt_uav_speed('請選擇 UAV 速度 V (1: 1 m/s；4: 4 m/s)：')
+        sim = simulator(args.episodes, args.max_seconds, args.no_train,
+                        scene=scene, hardware_hz=bool(hardware_hz), uav_speed=uav_speed)
+        sim.print_configuration()
+        sim.StartAndTrain()
+        return 0
+    except KeyboardInterrupt:
+        print('\nSimulation stopped; completed episode results are saved.', flush=True)
+        return 130
+    except Exception as error:
+        print('Simulation failed: {}: {}'.format(type(error).__name__, error), file=sys.stderr)
+        return 1
+    finally:
+        if sim is not None:
+            sim.close()
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

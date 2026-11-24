@@ -1,6 +1,5 @@
 #基础训练器类，根据此类可进行拓展，成为自定义训练器
 import sys
-sys.path.append("D:\研究生\RLFG\RLGF(实验专用)\BaseClass")
 import torch
 import torch.optim as optim
 

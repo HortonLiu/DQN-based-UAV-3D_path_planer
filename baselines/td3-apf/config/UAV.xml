@@ -1,0 +1,93 @@
+<Agent>
+    <Agent_Type>UAV</Agent_Type>
+    <name>UAV_</name>
+    <update_function_name>update_PathPlan_PGITD3</update_function_name>
+    <state_function_name>state_PathPlan_PGITD3</state_function_name>
+    <APF_Enabled>0</APF_Enabled>
+    <position>
+        <x>250</x>
+        <y>250</y>
+        <z>75</z>
+    </position>
+    <!-- Min_V is ineffective -->
+    <!-- RL always use Max_V 2 run -->
+    <Min_V>0.6</Min_V>
+    <!-- 1 -->
+    <Max_V>1</Max_V>
+    <Steering_angle>30</Steering_angle>   
+    <pitch_angle>45</pitch_angle>
+    <pitch_delta_angle>30</pitch_delta_angle>
+    <Min_h>0</Min_h>
+    <Max_h>100</Max_h>
+    <detected_obstacle_limit>20</detected_obstacle_limit>
+    <state_scale>500.0</state_scale>
+    <obstacle_detection_range>160.0</obstacle_detection_range>
+    <repulsion_range>160.0</repulsion_range>
+    <safe_distance>5.0</safe_distance>
+    <goal_threshold>15.0</goal_threshold>
+    <eta_min>0.0</eta_min>
+    <eta_max>20.0</eta_max>
+    <attractive_gain>1.0</attractive_gain>
+    <attractive_weakening_radius>120.0</attractive_weakening_radius>
+    <repulsion_distance_power>2.0</repulsion_distance_power>
+    <apf_force_clip>5.0</apf_force_clip>
+    <virtual_eta>20.0</virtual_eta>
+    <virtual_obstacle_perturbation>0.2</virtual_obstacle_perturbation>
+    <virtual_obstacle_radius>5.0</virtual_obstacle_radius>
+    <virtual_obstacle_min_radius>3.0</virtual_obstacle_min_radius>
+    <virtual_obstacle_max_radius>8.0</virtual_obstacle_max_radius>
+    <virtual_obstacle_lifetime>20</virtual_obstacle_lifetime>
+    <R>50</R>
+    <R_comm>75</R_comm>
+    <Acceration>5</Acceration>
+    <!-- 900 -->
+    <Max_Step>3600</Max_Step>
+
+    <stuck_step_limit>10</stuck_step_limit>
+    <stuck_distance_threshold>3.0</stuck_distance_threshold>
+    <virtual_force_initial>10.0</virtual_force_initial>
+    <virtual_force_growth>2.0</virtual_force_growth>
+    <!-- max_virtual_force = 40.0 (original)-->
+    <max_virtual_force>20.0</max_virtual_force                                                                                    >
+    <bonus_steps_per_v_obs>50</bonus_steps_per_v_obs>
+    <max_virtual_obstacle>200</max_virtual_obstacle>
+
+    <sub_granularity>30</sub_granularity>
+    <map_granularity>1</map_granularity>
+    <f_max>5</f_max>
+    <DFRL_param>
+        <update_rate>0.05</update_rate>
+        <Top_G>20</Top_G>
+    </DFRL_param>
+    <Power_param>
+        <Fly_power>
+            <P_i>89</P_i>
+            <v_0>4.05</v_0>
+            <d_0>0.6</d_0>
+            <rho>1.225</rho>
+            <s>0.05</s>
+            <A>0.5</A>
+            <P_b>79</P_b>
+            <F_b>120</F_b>
+        </Fly_power>
+        <Communication_power>3</Communication_power>
+    </Power_param>
+    <UEs_param>
+        <Agent_Type>UE_experience</Agent_Type>
+        <UES_num>0</UES_num>
+        <step_len>2</step_len>
+        <D_max>1000</D_max>
+        <D>10</D>
+        <F>0.05</F>
+        <B>1</B>
+        <g_0>0.000142</g_0>
+        <G_0>2.228</G_0>
+        <theta_2>-90</theta_2>
+        <P_tr>0.1</P_tr>
+    </UEs_param>
+    <DSNs_param>
+        <DSN_num>6</DSN_num>
+        <step_skill_max>2</step_skill_max>
+        <DSN_gamma>1</DSN_gamma>
+    </DSNs_param>
+</Agent>

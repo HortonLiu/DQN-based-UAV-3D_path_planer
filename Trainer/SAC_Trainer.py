@@ -1,5 +1,11 @@
+# Portions adapted from Hands-on Reinforcement Learning (SAC examples in chapter 14).
+# https://github.com/boyu-ai/Hands-on-RL/tree/4a151a4bfeafd3061c0e0ef59bece25ca8fb2bf8
+# RLGF added configurable replay and checkpointing, and this project extends both.
+# Apache-2.0 terms are in licenses/Hands-on-RL-LICENSE.
+
 #SAC算法训练器
 import datetime
+import inspect
 import socket
 import time
 
@@ -12,6 +18,15 @@ import os
 import sys
 Path=os.path.abspath(os.path.dirname(__file__))
 sys.path.append(Path)
+
+
+def _load_checkpoint(path, map_location):
+    """Load this project's checkpoints with both old and current PyTorch APIs."""
+    options = {'map_location': map_location}
+    # PyTorch 1.11 forwards unknown keywords to Unpickler; **kwargs is not support.
+    if 'weights_only' in inspect.signature(torch.load).parameters:
+        options['weights_only'] = True
+    return torch.load(path, **options)
  
 
 class SAC_Trainer(BaseTrainer):
@@ -62,61 +77,52 @@ class SAC_Trainer(BaseTrainer):
         self.epoch=0   #训练周期数
         self.loss=0
         self.Update_loop=int(None2Value(param.get('Update_loop'),3))
+        self.checkpoint_dir = os.path.abspath(os.path.join(root, param.get('checkpoint_dir', 'Mod')))
 
         #初始化模型
         self.Load_Mod()   #载入可能已经存在的模型参数
         
 
-    def Load_Mod(self,Mod=None):
-        #如果Mod不为None，则载入模型，若为None则载入默认模型
-        #如果能在 ../Mod 路径下在能找到该模型的文件，则载入模型
-        if Mod != None:
+    def Load_Mod(self, Mod=None):
+        if Mod is not None:
             self.actor.load_state_dict(Mod['actor_model'])
-            self.critic.load_state_dict(Mod['critic_model'])
-            self.optim.load_state_dict(Mod['optimizer'])
-            self.epoch=Mod['epoch'] 
-        else:
-            if self.name==None:
-                path_actor=root+'/Mod/actor_SAC.pth'
-                path_critic_1=root+'/Mod/critic_1_SAC.pth'
-                path_critic_2=root+'/Mod/critic_2_SAC.pth'
-            else:
-                path_actor=root+'/Mod/actor_SAC_'+self.name+'.pth'
-                path_critic_1=root+'/Mod/critic_1_SAC_'+self.name+'.pth'
-                path_critic_2=root+'/Mod/critic_2_SAC_'+self.name+'.pth'
-            if os.path.exists(path_actor) and os.path.exists(path_critic_1) and os.path.exists(path_critic_2):
-                try:
-                    
-                    Mod_actor=torch.load(path_actor)
-                    Mod_critic_1=torch.load(path_critic_1)
-                    Mod_critic_2=torch.load(path_critic_2)
-                    self.actor.load_state_dict(Mod_actor['model'])
-                    self.critic_1.load_state_dict(Mod_critic_1['model'])
-                    self.critic_2.load_state_dict(Mod_critic_2['model'])
-                    self.actor_optimizer.load_state_dict(Mod_actor['optimizer'])
-                    self.critic_1_optimizer.load_state_dict(Mod_critic_1['optimizer'])
-                    self.critic_2_optimizer.load_state_dict(Mod_critic_2['optimizer'])
+            self.critic_1.load_state_dict(Mod['critic_1_model'])
+            self.critic_2.load_state_dict(Mod['critic_2_model'])
+            self.target_critic_1.load_state_dict(self.critic_1.state_dict())
+            self.target_critic_2.load_state_dict(self.critic_2.state_dict())
+            self.epoch = int(Mod.get('epoch', 0))
+            return
+        suffix = '' if self.name is None else '_' + self.name
+        paths = [os.path.join(self.checkpoint_dir, network + '_SAC' + suffix + '.pth')
+                 for network in ('actor', 'critic_1', 'critic_2')]
+        if not all(os.path.isfile(path) for path in paths):
+            return
+        # The configured directory isolates corrected runs from old short-episode weights.
+        actor, critic_1, critic_2 = [_load_checkpoint(path, map_location=self.device)
+                                    for path in paths]
+        self.actor.load_state_dict(actor['model'])
+        self.critic_1.load_state_dict(critic_1['model'])
+        self.critic_2.load_state_dict(critic_2['model'])
+        self.actor_optimizer.load_state_dict(actor['optimizer'])
+        self.critic_1_optimizer.load_state_dict(critic_1['optimizer'])
+        self.critic_2_optimizer.load_state_dict(critic_2['optimizer'])
+        self.target_critic_1.load_state_dict(self.critic_1.state_dict())
+        self.target_critic_2.load_state_dict(self.critic_2.state_dict())
+        self.epoch = int(actor.get('epoch', 0))
 
-                    #目标网络复制参数
-                    self.target_critic_1.load_state_dict(self.critic_1.state_dict())
-                    self.target_critic_2.load_state_dict(self.critic_2.state_dict())
-
-                    self.epoch=Mod_actor['epoch'] 
-                except Exception as e:
-                    print(e.args)  #输出异常信息
-
-
-    def save(self,directory=root+'/Mod/'):
-        #创建模型文件名
-        filename=''
-        #存放模型到指定路径
-        state = {'model': self.actor.state_dict(), 'optimizer': self.actor_optimizer.state_dict(), 'epoch': self.epoch}
-        torch.save(state, '%s/actor_SAC_%s.pth' % (directory,self.name))
-        state = {'model': self.critic_1.state_dict(), 'optimizer': self.critic_1_optimizer.state_dict(), 'epoch': self.epoch}
-        torch.save(state, '%s/critic_1_SAC_%s.pth' % (directory,self.name))
-
-        state = {'model': self.critic_2.state_dict(), 'optimizer': self.critic_2_optimizer.state_dict(), 'epoch': self.epoch}
-        torch.save(state, '%s/critic_2_SAC_%s.pth' % (directory,self.name))
+    def save(self, directory=None):
+        if not self.Is_Train:
+            return
+        directory = self.checkpoint_dir if directory is None else directory
+        os.makedirs(directory, exist_ok=True)
+        suffix = '' if self.name is None else '_' + self.name
+        for name, network, optimizer in (
+                ('actor', self.actor, self.actor_optimizer),
+                ('critic_1', self.critic_1, self.critic_1_optimizer),
+                ('critic_2', self.critic_2, self.critic_2_optimizer)):
+            state = {'model': network.state_dict(), 'optimizer': optimizer.state_dict(),
+                     'epoch': self.epoch}
+            torch.save(state, os.path.join(directory, name + '_SAC' + suffix + '.pth'))
 
      # 计算目标Q值,直接用策略网络的输出概率进行期望计算
     def calc_target(self, rewards, next_states, dones):
@@ -147,6 +153,8 @@ class SAC_Trainer(BaseTrainer):
             param_target.data.copy_(param_target.data * (1.0 - self.tau) +param.data * self.tau)
 
     def learn_on_policy(self,transition_dict):
+        if not self.Is_Train:
+            return {'sum_epoch': self.epoch, 'loss': 0.0}
         #AC算法是进行在线优化，故使用transition_dict
         self.epoch+=1
         train_result={'sum_epoch':self.epoch,'loss':self.loss }
@@ -197,6 +205,8 @@ class SAC_Trainer(BaseTrainer):
         return train_result  #返回训练结果
 
     def learn_off_policy(self):
+        if not self.Is_Train:
+            return {'sum_epoch': self.epoch, 'loss': 0.0}
         #离线训练
         self.epoch+=1
         train_result={'sum_epoch':self.epoch,'loss':self.loss }
@@ -315,6 +325,8 @@ class SAC_Trainer(BaseTrainer):
 
     #通用型更新方式
     def update(self,transition_dict):
+        if not self.Is_Train:
+            return {'sum_epoch': self.epoch, 'loss': 0.0}
         
         #离线训练
         self.epoch+=1
@@ -446,12 +458,12 @@ class SAC_Trainer(BaseTrainer):
         # [新增] 禁用梯度計算，這會讓 480Hz 的推理速度大幅提升，並節省巨量顯存
         with torch.no_grad():
             if self.IS_Continuous==1:
-                state = torch.tensor([state], dtype=torch.float).to(self.device)
+                state = torch.as_tensor(np.asarray(state), dtype=torch.float, device=self.device).unsqueeze(0)
                 action = self.actor(state)[0]
                 # [修改] 安全起見，確保資料從 GPU 回到 CPU 後再轉成 Python List
                 return action.cpu().tolist()[0]
             else:
-                state = torch.tensor([state], dtype=torch.float).to(self.device)
+                state = torch.as_tensor(np.asarray(state), dtype=torch.float, device=self.device).unsqueeze(0)
                 probs = self.actor(state)
                 action_dist = torch.distributions.Categorical(probs)
                 action = action_dist.sample()
