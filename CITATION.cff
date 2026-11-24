@@ -4,6 +4,7 @@ title: "Autonomous Drone Navigation based on Reinforcement Learning integrated w
 type: software
 version: 0.1.0
 license: MIT
+doi: "10.5281/zenodo.24494002"
 authors:
   - given-names: Ming-Chieh
     family-names: Liu

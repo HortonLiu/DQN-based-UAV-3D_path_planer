@@ -5,7 +5,7 @@ Department of Mechanical Engineering, National Taiwan University of Science and 
 
 Research software and simulation data for the accompanying manuscript on learning-assisted local drone navigation.
 
-[Run the simulator](#quick-start) · [Explore the data](#simulation-data) · [Reproduce the results](docs/reproduction.md) · [Cite this work](#citation)
+[Run the simulator](#quick-start) · [Explore the data](#simulation-data) · [Reproduce the results](docs/reproduction.md) · [Zenodo archive v0.1.0](https://doi.org/10.5281/zenodo.24494002)
 
 ![Plan view of the archived mixed-scene rollout, showing the UAV trajectory, static obstacle footprints, and six moving-obstacle tracks](assets/figures/archived-mixed-trajectory.png)
 
@@ -57,7 +57,7 @@ The three archived SAC runs have final exponentially smoothed success values of 
 
 ## Citation
 
-Use GitHub's **Cite this repository** entry for the software and refer to the accompanying manuscript by its title and authors. Versioned archive metadata will be added when the DOI is available. [`CITATION.cff`](CITATION.cff)
+Cite the Zenodo version DOI for analyses using the `v0.1.0` software and packaged simulation data. Use GitHub's **Cite this repository** entry for a formatted citation, and cite the accompanying manuscript by its title and authors. [Version 0.1.0 DOI](https://doi.org/10.5281/zenodo.24494002) · [GitHub release](https://github.com/HortonLiu/DQN-based-UAV-3D_path_planer/releases/tag/v0.1.0) · [`CITATION.cff`](CITATION.cff)
 
 ## Acknowledgments and licenses
 
