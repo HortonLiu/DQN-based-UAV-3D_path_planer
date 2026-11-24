@@ -2,6 +2,8 @@ cff-version: 1.2.0
 message: "If you use this research artifact, please cite the software and the accompanying manuscript."
 title: "Autonomous Drone Navigation based on Reinforcement Learning integrated with Artificial Potential Field"
 type: software
+version: 0.1.0
+license: MIT
 authors:
   - given-names: Ming-Chieh
     family-names: Liu
@@ -11,7 +13,7 @@ authors:
     family-names: Lan
     affiliation: "Department of Mechanical Engineering, National Taiwan University of Science and Technology"
 repository-code: "https://github.com/HortonLiu/DQN-based-UAV-3D_path_planer"
-abstract: "Python simulation software and archived outcomes for local drone navigation using Soft Actor–Critic and a virtual-obstacle artificial potential field."
+abstract: "Python simulation software and archived outcomes for local drone navigation using Soft Actor–Critic and a virtual-obstacle artificial potential field. The research software is licensed under MIT. The packaged simulation data are licensed under CC BY 4.0."
 keywords:
   - autonomous navigation
   - artificial potential fields

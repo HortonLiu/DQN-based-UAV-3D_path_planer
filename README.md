@@ -61,4 +61,6 @@ Use GitHub's **Cite this repository** entry for the software and refer to the ac
 
 ## Acknowledgments and licenses
 
-The simulator builds on the RLGF project by young how. The upstream MIT copyright and license are retained. The adapted reinforcement-learning examples and the offline chart bundles retain their respective notices and licenses. [RLGF upstream](https://github.com/young-how/DQN-based-UAV-3D_path_planer) · [MIT notice](LICENSE) · [Training code notices](licenses/) · [Chart bundle notices](assets/pyecharts/)
+The research software is licensed under MIT. The packaged simulation scores, episode outcomes, and trajectory data are licensed under CC BY 4.0. [Software license](LICENSE) · [Simulation data license](data/LICENSE)
+
+The simulator builds on the RLGF project by young how. The upstream copyright notice and the licenses for the adapted training examples and offline chart bundles accompany the software. [RLGF upstream](https://github.com/young-how/DQN-based-UAV-3D_path_planer) · [Training code notices](licenses/) · [Chart bundle notices](assets/pyecharts/)
