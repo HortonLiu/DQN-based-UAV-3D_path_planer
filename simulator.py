@@ -34,12 +34,25 @@ class simulator:
         'hardware_hz_enabled', 'control_hz', 'control_dt_s',
         'dynamic_obstacles_enabled', 'scene', 'uav_speed_m_s',
     ]
+    MANUSCRIPT_CSV_FIELDS = ['controller_profile', 'map_level', 'scene_seed', 'termination_reason']
 
     def __init__(self, episodes=None, max_seconds=None, no_train=False, config_path=None,
-                 scene='static', hardware_hz=True, uav_speed=None):
+                 scene='static', hardware_hz=True, uav_speed=None,
+                 controller_profile='legacy', map_level=None, fixed_map_xml=None):
         if scene not in ('static', 'mixed'):
             raise ValueError('scene must be static or mixed')
+        if controller_profile not in ('legacy', 'manuscript'):
+            raise ValueError('controller_profile must be legacy or manuscript')
+        if map_level is not None and (controller_profile != 'manuscript' or scene != 'static'):
+            raise ValueError('map_level requires the manuscript controller and a static scene')
+        if map_level not in (None, 1, 2, 3):
+            raise ValueError('map_level must be 1, 2 or 3')
+        if (map_level == 1) != (fixed_map_xml is not None):
+            raise ValueError('Level 1 requires a verified fixed map XML, which is only used for Level 1')
         self.scene = scene
+        self.controller_profile = controller_profile
+        self.map_level = map_level
+        self.fixed_map_xml = Path(fixed_map_xml).resolve() if fixed_map_xml is not None else None
         if hardware_hz not in (0, 1):
             raise ValueError('hardware_hz must be 0 or 1')
         self.hardware_hz_enabled = bool(hardware_hz)
@@ -69,6 +82,8 @@ class simulator:
         stamp = '{}_{}_{}Hz_{}_{}'.format(
             datetime.datetime.now().strftime('%m_%d_%Y(%H_%M_%S_%f)'),
             self.scene, 480 if self.hardware_hz_enabled else 1, speed_label, os.getpid())
+        if self.controller_profile == 'manuscript':
+            stamp += '_manuscript' if self.map_level is None else '_manuscript_level%d' % self.map_level
         logs = ROOT / 'logs'
         logs.mkdir(parents=True, exist_ok=True)
         self.result_path = str(logs / ('score_' + stamp + '.csv'))
@@ -78,6 +93,8 @@ class simulator:
                 self.num_episodes = int(episodes)
             if self.num_episodes < 1:
                 raise ValueError('num_episodes must be positive')
+            if self.map_level is not None and self.num_episodes > 1000:
+                raise ValueError('the manuscript map schedule covers 1,000 episodes')
             for agent in self.env.Agents:
                 if max_seconds is not None:
                     seconds = float(max_seconds)
@@ -110,6 +127,9 @@ class simulator:
         config['env']['Hardware_Hz_Enabled'] = int(getattr(self, 'hardware_hz_enabled', True))
         if getattr(self, 'uav_speed', None) is not None:
             config['env']['UAV_Speed_M_S'] = self.uav_speed
+        config['env']['controller_profile'] = getattr(self, 'controller_profile', 'legacy')
+        config['env']['map_level'] = getattr(self, 'map_level', None)
+        config['env']['fixed_map_xml'] = getattr(self, 'fixed_map_xml', None)
         self.env = self.EnvFactory.Create_Env(config['env'])
         if self.env is None or not self.env.Agents:
             raise RuntimeError('Cannot initialize the configured environment and UAV')
@@ -121,7 +141,10 @@ class simulator:
     def Init_Record_Mod(self):
         self._result_file = open(self.result_path, 'w', newline='', encoding='utf-8')
         self.CsvWriter = csv.writer(self._result_file)
-        self.CsvWriter.writerow(self.CSV_FIELDS)
+        fields = self.CSV_FIELDS
+        if getattr(self, 'controller_profile', 'legacy') == 'manuscript':
+            fields = fields + self.MANUSCRIPT_CSV_FIELDS
+        self.CsvWriter.writerow(fields)
         self._result_file.flush()
 
     @staticmethod
@@ -159,6 +182,11 @@ class simulator:
                 'mixed' if getattr(self.env, 'dynamic_enabled', False) else 'static',
                 getattr(agent, 'Max_V', ''),
             ]
+            if getattr(self, 'controller_profile', 'legacy') == 'manuscript':
+                scene = self.env.manuscript_scene
+                row.extend((self.controller_profile, self.map_level,
+                            scene.seed if scene is not None else None,
+                            getattr(agent, 'terminal_info', '')))
             self.CsvWriter.writerow([self._number(value) for value in row])
             self._result_file.flush()
         self.infos.clear()
@@ -191,6 +219,9 @@ class simulator:
             agent.freq_rtk, agent.freq_lidar, agent.stuck_window_seconds), flush=True)
         print('SAC decision/replay interval: {:g} s | training: {}'.format(
             agent.reference_dt, 'off' if self.no_train else 'on'), flush=True)
+        if self.controller_profile == 'manuscript':
+            print('Controller profile: manuscript | map level: {}'.format(
+                self.map_level if self.map_level is not None else 'existing S2R reset'), flush=True)
         print('Checkpoints: {}'.format(agent.Trainer.checkpoint_dir), flush=True)
         print('Scores: {}'.format(self.result_path), flush=True)
         print('HTML: {}'.format(ROOT / 'DataBase' / 'experience'), flush=True)
@@ -297,6 +328,12 @@ def main():
     parser.add_argument('--episodes', type=positive_integer, help='override configured episode count')
     parser.add_argument('--max-seconds', type=positive_seconds, help='override episode simulation duration')
     parser.add_argument('--no-train', action='store_true', help='simulate without optimizing or saving weights')
+    parser.add_argument('--controller-profile', choices=('legacy', 'manuscript'), default='legacy',
+                        help='select the archived simulator or the manuscript VOAPF 2.0 implementation')
+    parser.add_argument('--map-level', type=int, choices=(1, 2, 3),
+                        help='use the manuscript seed schedule for a static scene')
+    parser.add_argument('--fixed-map-xml', type=Path,
+                        help='verified fixed non-overlapping map required for Level 1')
     args = parser.parse_args()
     sim = None
     try:
@@ -311,7 +348,9 @@ def main():
         if uav_speed is None:
             uav_speed = prompt_uav_speed('請選擇 UAV 速度 V (1: 1 m/s；4: 4 m/s)：')
         sim = simulator(args.episodes, args.max_seconds, args.no_train,
-                        scene=scene, hardware_hz=bool(hardware_hz), uav_speed=uav_speed)
+                        scene=scene, hardware_hz=bool(hardware_hz), uav_speed=uav_speed,
+                        controller_profile=args.controller_profile, map_level=args.map_level,
+                        fixed_map_xml=args.fixed_map_xml)
         sim.print_configuration()
         sim.StartAndTrain()
         return 0

@@ -81,6 +81,8 @@ class PathPlan_City(BaseEnv):
             trainer_config_dict = XML2Dict(trainer_xml_path)
             agent_trainer = trainer_config_dict.get('Trainer')
             agent_trainer['name'] = obj_agent.name
+            if param.get('manuscript_map_level') is not None:
+                agent_trainer['manuscript_map_level'] = param['manuscript_map_level']
             obj_agent.Trainer = self.TrainerFactory.Create_Trainer(agent_trainer)
             self.Agents.append(obj_agent)
 

@@ -191,7 +191,7 @@ class UAV(BaseAgent):
         self.Train_time+=(end-start)
         return re
 
-    def reset(self,option=None):
+    def reset(self, option=None, *, scene=None):
         if option=="local reset":
             self.Step=0
             self.score=0
@@ -206,15 +206,14 @@ class UAV(BaseAgent):
             self.virtual_obstacle_history = []
             self.goal_distance_history = []
             self.V_vector=Loc(5,3,0)
-            seta=random.uniform(0,2*math.pi)
+            seta = scene.heading_rad if scene is not None else random.uniform(0, 2 * math.pi)
             self.V_dir=seta
             self.V_vector.x=self.Max_V*math.cos(seta)
             self.V_vector.y=self.Max_V*math.sin(seta)
             self.V=self.Calc_V()
             self.infos=[]; self.data_num=0
             
-            x=random.uniform(10,210)
-            y=random.uniform(1,10)
+            x, y = scene.start if scene is not None else (random.uniform(10, 210), random.uniform(1, 10))
             
             # 【關鍵修復1】高度拉高到 5.0 防止出生在 Z=0 瞬間判定撞地死亡
             self.position = Loc(x,y,5.0)
@@ -222,8 +221,7 @@ class UAV(BaseAgent):
             # 【關鍵修復2】強制初始化路徑紀錄，給予第一個點，確保 Line3D 不為空
             self.path = [[self.position.x, self.position.y, self.position.z]]
             
-            x=random.uniform(330,490)
-            y=random.uniform(420,490)
+            x, y = scene.goal if scene is not None else (random.uniform(330, 490), random.uniform(420, 490))
             self.goal=Loc(x,y,0)
             
             self.total_score=0; self.path_len=0; self.reach_goal=0

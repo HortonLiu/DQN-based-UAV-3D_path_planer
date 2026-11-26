@@ -27,12 +27,22 @@ To use the verified Windows x64 Python 3.9 dependency versions, add `-c data/exa
 | `--uav-speed` | `1` or `4` m/s |
 | `--episodes`, `--max-seconds` | Override the episode count and base time budget. The default run is 1,000 episodes with a 1,200 s base budget per episode |
 | `--no-train` | Disable optimizer updates and checkpoint saves. The simulator still loads a complete checkpoint for the selected scenario when available |
+| `--controller-profile` | `legacy` for the archived S2R behavior, or `manuscript` for the revised SAC + VOAPF 2.0 controller |
+| `--map-level` | A static manuscript scene using Level 2 non-overlap, Level 3 overlap, or Level 1 with `--fixed-map-xml` |
 
-The simulator prompts for the first three options when omitted. The scenarios share `config/buildings.xml` and the current simulator randomizes the map every two episodes. The moving obstacles translate along X, Y, or an oblique direction, with two obstacles assigned to each pattern and a total speed of 4 m/s. Their centers reverse at the workspace boundary. `Dynamic_Obstacles/half_range` in the mixed XML can set the one-sided travel distance. The original endpoints for Figure 15 require source-run confirmation.
+The simulator prompts for the first three options when omitted. The scenarios share `config/buildings.xml` and the current simulator randomizes the map every two episodes. The moving obstacles translate along X, Y, or an oblique direction, with two obstacles assigned to each pattern and a total speed of 4 m/s. Their centers reverse at the configured motion endpoints. `Dynamic_Obstacles/half_range` in the mixed XML can set the one-sided travel distance. The six recorded motion tracks used in manuscript Figure 16(a) are embedded in its source HTML. [Figure inputs and commands](../data/manuscript/README.md)
 
 Both control modes use a one-second SAC decision interval and `gamma=0.99`. At 480 Hz, modeled RTK and LiDAR updates run at 20 and 10 Hz respectively. At 1 Hz, both are sampled at every update. The stagnation detector uses a 10 s window and a 3 m displacement threshold. Virtual-obstacle generation can extend the base episode budget by 50 s.
 
 The historical DDPG, TD3 and SAC versions use independent entry points and configurations. [Baseline verification instructions](../baselines/README.md)
+
+## Manuscript protocol
+
+The baseline experiment section of the 2026-11-26 Overleaf export describes a fixed Level 1 layout and new randomized Level 2 and 3 scenes each episode. With `--map-level 2` or `--map-level 3`, the static manuscript simulator and the DDPG and PG-ITD3 baseline entry points use `scripts/manuscript_scenes.py` and the episode seed `123 + (m - 1)`. They share the planar starts, goals, headings and obstacle geometry. Each controller retains its altitude convention. The SAC episode JSON records the seed, initial heading, positions, and obstacle dimensions. The checked-in XML has 26 ordered radius and height pairs, with a maximum radius of 45.807 m. The manuscript specifies 45.506 m. Exact matched-map historical retraining requires the original configuration and run files. [Baseline commands](../baselines/README.md#run-the-baselines-on-shared-scenes)
+
+The manuscript profile places a point source at the midpoint from the drone to the first obstacle boundary detected along the goal ray. It uses separate 5.6 m sensing and force ranges, a 900-second initial budget, and the manuscript's event-dependent reward. The 1 Hz mode uses direct cell-center probes. The 480 Hz mode casts 683 rays across a 240° field centered on the flight heading and holds the LiDAR grid between 10 Hz updates. The implementation uses 1 m cells, ray–cell traversal, and `-1` for tied or unobserved cells. The manuscript leaves these cell-aggregation choices open. The held sensor values feed the policy observation, while the low-level field evaluates current simulation geometry. Manuscript-profile weights are written under a `manuscript/` subdirectory of the selected checkpoint directory, with an additional `levelN/` subdirectory when applicable. [Alignment audit and scope](manuscript-alignment.md)
+
+The manuscript profile terminates the episode after a physical obstacle collision. The legacy S2R profile counts attempted obstacle-intersecting moves, restores the prior position and applies a penalty. The Figure 16(b) and 17(c) curve inputs preserve the archived `success` field. In mixed case [1], 809 of the 873 successful episodes have nonzero `meet_threaten`. The displayed rates measure logged goal arrival under the archived outcome definition.
 
 ## Load a verified historical checkpoint
 
@@ -53,6 +63,12 @@ All three sets loaded the models and optimizer state on CPU and ran for 960 upda
 For static 480 Hz runs, use `--scene static` and set the matching speed. For 1 Hz checkpoints, add `one_second/` between the checkpoint root and the speed directory. The `--no-train` mode still samples from the learned policy distribution.
 
 These three checkpoint sets come from near the end of their training runs. Exact retraining requires the original initial state, run configuration and code. To train with initial weights in the current simulator, use an empty checkpoint directory and omit `--no-train`. Existing complete checkpoints restore weights, optimizer state, and the saved epoch. Exact continuation would also require the original replay buffer and RNG state. Preserve the run command, XML, environment, score CSV, trajectory JSON, and TensorBoard events.
+
+## Rebuild manuscript Figures 14–17
+
+Install the figure-specific dependencies and follow the two build commands in the [figure data README](../data/manuscript/README.md). The success plots use the original 1–999 or 1–1,000 episode ranges and initialization-corrected EMA with `β = 0.99`. Starting at `W₀ = 0`, calculate `Wₘ = 0.99 Wₘ₋₁ + 0.01 Xₘ`, then plot `Wₘ / (1 − 0.99ᵐ)`. Here `Xₘ` is the binary outcome at the `m`th observed episode. `γ = 0.99` is the SAC return discount.
+
+Figure 16(b) plots the October mixed and static 1 m/s runs. Figure 17(c) uses the same static 1 m/s run and the November static 4 m/s run. For Figures 16(a), 17(a), and 17(b), the trajectory script uses the original position vertices, obstacle surfaces and available obstacle tracks from the three HTML reports. See the [cross-check](release-checklist.md) for differences between the regenerated vectors and the manuscript text.
 
 ## Recalculate the archived training outcomes
 
@@ -87,4 +103,4 @@ for run, outcomes in series.items():
 
 Regenerate the README's trajectory figure with `.\.venv\Scripts\python.exe scripts/plot_archived_trajectory.py`. The source is episode 412 of the archived mixed run.
 
-The three SAC archives yield final EMA values of 86.78%, 79.22%, and 85.64%. The manuscript's Figure 15 reports 98.1% and 95.3% for its mixed and static comparisons. The figure's original run IDs and analysis settings are pending confirmation. [Figure and release status](release-checklist.md)
+The three SAC archives yield final zero-initialized EMA values of 86.78%, 79.22%, and 85.64%. The author-final vectors apply initialization correction to those same episodes and yield 86.79%, 79.22%, and 85.64%.

@@ -70,6 +70,14 @@ class PG_ITD3_Trainer(BaseTrainer):
     def __init__(self, param: dict) -> None:
         super().__init__(param)
         self.name = param.get('name')
+        self.manuscript_map_level = param.get('manuscript_map_level')
+        self.checkpoint_directory = os.path.join(root, 'Mod')
+        if self.manuscript_map_level is not None:
+            if self.manuscript_map_level not in (2, 3):
+                raise ValueError('Shared map level must be 2 or 3')
+            self.checkpoint_directory = os.path.join(
+                self.checkpoint_directory, 'manuscript', f'level{int(self.manuscript_map_level)}'
+            )
         actor_param = param.get('actor')
         critic_param = param.get('critic')
         td3_param = param.get('TD3_param') or {}
@@ -129,9 +137,9 @@ class PG_ITD3_Trainer(BaseTrainer):
             self.critic_2.load_state_dict(Mod['critic_2_model'])
             return
 
-        actor_path = os.path.join(root, 'Mod', 'PG_ITD3_actor_%s.pth' % self.name)
-        critic_1_path = os.path.join(root, 'Mod', 'PG_ITD3_critic_1_%s.pth' % self.name)
-        critic_2_path = os.path.join(root, 'Mod', 'PG_ITD3_critic_2_%s.pth' % self.name)
+        actor_path = os.path.join(self.checkpoint_directory, 'PG_ITD3_actor_%s.pth' % self.name)
+        critic_1_path = os.path.join(self.checkpoint_directory, 'PG_ITD3_critic_1_%s.pth' % self.name)
+        critic_2_path = os.path.join(self.checkpoint_directory, 'PG_ITD3_critic_2_%s.pth' % self.name)
         if not (os.path.exists(actor_path) and os.path.exists(critic_1_path) and os.path.exists(critic_2_path)):
             return
         try:
@@ -151,7 +159,11 @@ class PG_ITD3_Trainer(BaseTrainer):
         except Exception as e:
             print(e.args)
 
-    def save(self, directory=root + '/Mod/'):
+    def save(self, directory=None):
+        if directory is None:
+            directory = self.checkpoint_directory
+        elif self.manuscript_map_level is not None and os.path.realpath(directory) != os.path.realpath(self.checkpoint_directory):
+            raise ValueError(f'Shared map checkpoints use {self.checkpoint_directory}')
         os.makedirs(directory, exist_ok=True)
         torch.save(
             {'model': self.actor.state_dict(), 'optimizer': self.actor_optimizer.state_dict(), 'epoch': self.epoch},

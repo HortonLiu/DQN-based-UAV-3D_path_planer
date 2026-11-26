@@ -17,6 +17,7 @@ from pathlib import Path
 import pyecharts.options as opts
 from pyecharts.charts import Line3D, Scatter3D, Surface3D, Grid
 from DataBase.Connector import MySQLConnector
+from scripts.manuscript_scenes import generate_scene
 
 class PathPlan_City(BaseEnv):
     def __init__(self, param: dict) -> None:
@@ -24,6 +25,10 @@ class PathPlan_City(BaseEnv):
         self.eps = float(None2Value(param.get('eps'), 0.1))
         self.Is_On_Policy = int(param.get('Is_On_Policy'))
         self.param = param
+        self.controller_profile = param.get('controller_profile', 'legacy')
+        self.map_level = param.get('map_level')
+        self.fixed_map_xml = param.get('fixed_map_xml')
+        self.manuscript_scene = None
         hardware_flag = int(param.get('Hardware_Hz_Enabled', 1))
         if hardware_flag not in (0, 1):
             raise ValueError('Hardware_Hz_Enabled must be 0 or 1')
@@ -40,6 +45,8 @@ class PathPlan_City(BaseEnv):
         self.len = int(param.get('len', 500))
         self.width = int(param.get('width', 500))
         self.h = int(param.get('h', 100))
+        if self.map_level is not None and (self.len, self.width) != (500, 500):
+            raise ValueError('manuscript map levels require a 500 m by 500 m workspace')
 
         self.map = np.zeros((self.width, self.len)) 
         self.buildings = []
@@ -54,8 +61,9 @@ class PathPlan_City(BaseEnv):
         
         threaten_params = param.get('Obstacles')
         if threaten_params is not None:
-            buildings_param_path = os.path.normpath(threaten_params.get('buildings'))
-            threaten_config_dict = XML2Dict(buildings_param_path)
+            self.buildings_xml = os.path.normpath(threaten_params.get('buildings'))
+            scene_xml = self.fixed_map_xml if self.map_level == 1 else self.buildings_xml
+            threaten_config_dict = XML2Dict(str(scene_xml))
             self.buildings_param = threaten_config_dict.get('buildings')
             
             if self.buildings_param is not None:
@@ -73,6 +81,7 @@ class PathPlan_City(BaseEnv):
         config_dict = XML2Dict(agents_xml_path)
         uav_params = config_dict.get('Agent')
         uav_params['Hardware_Hz_Enabled'] = int(self.hardware_hz_enabled)
+        uav_params['controller_profile'] = self.controller_profile
         if self.uav_speed_override is not None:
             # Apply before construction, including velocity and power initialization.
             uav_params['Max_V'] = self.uav_speed_override
@@ -97,6 +106,12 @@ class PathPlan_City(BaseEnv):
                 agent_trainer['checkpoint_dir'] = os.path.join(
                     agent_trainer.get('checkpoint_dir') or 'Mod',
                     'v%d' % self.uav_speed_override)
+            if self.controller_profile == 'manuscript':
+                directory = 'manuscript'
+                if self.map_level is not None:
+                    directory = os.path.join(directory, 'level%d' % self.map_level)
+                agent_trainer['checkpoint_dir'] = os.path.join(
+                    agent_trainer.get('checkpoint_dir') or 'Mod', directory)
             obj_agent.Trainer = self.TrainerFactory.Create_Trainer(agent_trainer)
             if obj_agent.Trainer is None:
                 raise RuntimeError("Trainer initialization returned None for %r from %s" %
@@ -114,6 +129,9 @@ class PathPlan_City(BaseEnv):
 
     def Scene_Random_Reset(self):
         self.reset_threads = []
+        if getattr(self, 'map_level', None) is not None:
+            self._reset_manuscript_scene()
+            return
         # Restore the same initial layout on the second episode sharing this map.
         for obstacle in self.dynamic_buildings:
             obstacle.reset_motion()
@@ -142,6 +160,22 @@ class PathPlan_City(BaseEnv):
         self.sim_time = 0.0
         for indx, uav in enumerate(self.Agents):
             uav.reset()
+
+    def _reset_manuscript_scene(self):
+        scene = generate_scene(self.map_level, self.epoch + 1,
+                               dimensions_xml=self.buildings_xml,
+                               fixed_map_xml=self.fixed_map_xml)
+        descriptions = self.buildings_param['Threaten']
+        for cylinder, description, layout in zip(self.buildings, descriptions, scene.obstacles):
+            cylinder.position.x, cylinder.position.y, cylinder.position.z = layout.x, layout.y, layout.z
+            location = description['position']
+            location.update(x=str(layout.x), y=str(layout.y), z=str(layout.z))
+        self._configure_dynamic_obstacles()
+        self.map = self.Draw_threaten_map()
+        self.sim_time = 0.0
+        self.manuscript_scene = scene
+        for agent in self.Agents:
+            agent.reset(scene=scene)
 
     def _configure_dynamic_obstacles(self):
         # Six of the original 26 objects move; preserve their sampled radii/positions.
@@ -189,6 +223,15 @@ class PathPlan_City(BaseEnv):
         environment['epoch'] = self.epoch
         environment['simulation_time_s'] = self.sim_time
         environment['virtual_obstacles'] = []
+        if getattr(self, 'controller_profile', 'legacy') == 'manuscript':
+            environment['controller_profile'] = self.controller_profile
+            if self.manuscript_scene is not None:
+                scene = self.manuscript_scene
+                environment['scene_protocol'] = {
+                    'level': scene.level, 'episode': scene.episode, 'seed': scene.seed,
+                    'start_m': scene.start, 'goal_m': scene.goal,
+                    'heading_rad': scene.heading_rad,
+                }
         if self.Agents:
             agent = self.Agents[0]
             scale = float(getattr(agent, 'step_units_per_second', 2.0 / agent.control_dt))
@@ -199,6 +242,8 @@ class PathPlan_City(BaseEnv):
                                              if hasattr(agent, 'Max_V') else None)
             environment['virtual_obstacles'] = self._virtual_source_data(agent)
             environment['collision_count'] = int(getattr(agent, 'collision_count', 0))
+            if environment.get('controller_profile') == 'manuscript':
+                environment['termination_reason'] = agent.terminal_info
             environment['timing'] = {
                 'hardware_hz_enabled': bool(getattr(agent, 'hardware_hz_enabled',
                                                      agent.control_dt < 1.0)),
@@ -482,6 +527,8 @@ class PathPlan_City(BaseEnv):
         self.result['active_step_budget'] = max((getattr(agent, 'Max_Step', 0) for agent in agents), default=0)
         self.result['collision_count'] = sum(getattr(agent, 'collision_count', 0) for agent in agents)
         self.result['meet_threaten'] = self.result['collision_count']
+        if getattr(self, 'controller_profile', 'legacy') == 'manuscript':
+            self.result['lose'] += sum(agent.terminal_info == 'meet_threaten' for agent in agents)
 
     def Cal_Score(self):
         sum_score = sum(agent.score for agent in self.Agents)

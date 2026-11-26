@@ -10,7 +10,7 @@ Each snapshot retains its own source files and simulation XML. In `BaseClass/Bas
 
 ## Verify each snapshot
 
-Install the pinned [dependencies](../README.md#quick-start) and run this PowerShell block from the repository root without checkpoints. The legacy `simulator.py` programs read their own XML and lack the current simulator's CLI options.
+Install the pinned [dependencies](../README.md#quick-start) and run this PowerShell block from the repository root without checkpoints. The baseline programs use their own simulation XML by default.
 
 ```powershell
 $python = (Resolve-Path .\.venv\Scripts\python.exe).Path
@@ -60,3 +60,19 @@ try {
 The DDPG snapshot defaults to `Load_Model=0`. Its loader expects the `Mod/DDPG_actor_UAV_0.pth` and `Mod/DDPG_critic_UAV_0.pth` pair when enabled. The TD3 snapshot looks for `Mod/PG_ITD3_actor_UAV_0.pth`, `Mod/PG_ITD3_critic_1_UAV_0.pth`, and `Mod/PG_ITD3_critic_2_UAV_0.pth`. Use trusted checkpoints with these legacy loaders.
 
 The archived TD3 runs are labeled `+VOAPF`. Match each archive's original code, map, overlap conditions, and starting weights before comparing results with these snapshots. [Historical data](../data/historical/README.md)
+
+## Run the baselines on shared scenes
+
+From each baseline directory, pass `--map-level 2` for separated obstacles or `--map-level 3` for layouts that allow overlap. Both use the repository's shared scene generator, so the level and episode select the same start, goal, heading, and obstacle geometry as the manuscript profile. The baseline trainers, rewards, altitude conventions, and episode limits follow their own snapshot settings.
+
+```powershell
+# From baselines/ddpg-apf
+python run_ddpg_apf_experiment.py --map-level 2 --train-episodes 1000 --eval-episodes 0 --no-render-html
+
+# From baselines/td3-apf
+python simulator.py --map-level 2 --episodes 1000
+```
+
+The CSV output identifies `map_level`, `map_episode`, and `map_seed`. With shared maps enabled, DDPG evaluation defaults to zero episodes. To request an evaluation, allocate up to 1,000 episodes in total. The fixed-gain APF and DDPG evaluation rollouts then share the scene IDs immediately following training. These generated layouts support new matched comparisons. The curve manifests identify the separate historical runs used in the paper.
+
+Shared runs read and write checkpoints under each baseline's `Mod/manuscript/level2/` or `Mod/manuscript/level3/`. DDPG loads checkpoints when `Load_Model=1`.

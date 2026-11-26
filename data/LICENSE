@@ -1,7 +1,7 @@
 Creative Commons Attribution 4.0 International (CC BY 4.0)
 
 This license covers the simulation scores, episode outcomes, and trajectory
-data included in the examples/ and historical/ directories.
+data included in the examples/, historical/, and manuscript/ directories.
 
 Attribute the data to Ming-Chieh Liu and Chen-Yang Lan, Autonomous Drone
 Navigation based on Reinforcement Learning integrated with Artificial

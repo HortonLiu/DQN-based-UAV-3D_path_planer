@@ -1,0 +1,4 @@
+# Preserve byte hashes for the source exports and original trajectory reports.
+*.csv -text
+*.html -text -diff
+*.json -text

@@ -73,6 +73,8 @@ class PathPlan_City(BaseEnv):
             trainer_config_dict = XML2Dict(trainer_xml_path)
             agent_trainer = trainer_config_dict.get('Trainer')
             agent_trainer['name'] = obj_agent.name
+            if param.get('manuscript_map_level') is not None:
+                agent_trainer['manuscript_map_level'] = param['manuscript_map_level']
             obj_agent.Trainer = self.TrainerFactory.Create_Trainer(agent_trainer)
             self.Agents.append(obj_agent)
 
@@ -87,6 +89,10 @@ class PathPlan_City(BaseEnv):
 
     def Scene_Random_Reset(self):
         self.reset_threads = []
+        shared_reset = getattr(self, 'shared_scene_reset', None)
+        if shared_reset is not None:
+            self.manuscript_scene = shared_reset(self.epoch + 1)
+            return
         if self.fixed_obstacles == 1:
             self.buildings = list(self.base_buildings)
             if not self.map_initialized:

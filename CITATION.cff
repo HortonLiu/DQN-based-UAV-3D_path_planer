@@ -2,9 +2,9 @@ cff-version: 1.2.0
 message: "If you use this research artifact, please cite the software and the accompanying manuscript."
 title: "Autonomous Drone Navigation based on Reinforcement Learning integrated with Artificial Potential Field"
 type: software
-version: 0.1.0
+version: 0.2.0
+doi: "10.5281/zenodo.24556113"
 license: MIT
-doi: "10.5281/zenodo.24494002"
 authors:
   - given-names: Ming-Chieh
     family-names: Liu
@@ -21,3 +21,16 @@ keywords:
   - reinforcement learning
   - Soft Actor–Critic
   - UAV simulation
+references:
+  - type: software
+    title: "Autonomous Drone Navigation based on Reinforcement Learning integrated with Artificial Potential Field"
+    version: 0.1.0
+    date-released: "2026-11-24"
+    doi: "10.5281/zenodo.24494002"
+    repository-code: "https://github.com/HortonLiu/DQN-based-UAV-3D_path_planer/releases/tag/v0.1.0"
+    authors:
+      - given-names: Ming-Chieh
+        family-names: Liu
+        orcid: "https://orcid.org/0009-0009-0873-8222"
+      - given-names: Chen-Yang
+        family-names: Lan

@@ -12,12 +12,14 @@ These files are curated from the research archive. They cover three SAC + VOAPF 
 
 Sampled trajectory JSON records confirm 480 Hz in `timing.control_hz`. Speed is corroborated by the run labels and the path length relative to simulation time. The EMA uses a decay of 0.99 and starts at zero. These values describe the archived runs listed here.
 
+These score series also supply the cases in manuscript Figures 16(b) and 17(c). The exact vector build uses initialization-corrected EMA at the same decay. The three representative JSONs here are examples from these score runs. The manuscript trajectory panels have separate sources linked from the [manuscript figure bundle](../manuscript/README.md).
+
 Each score CSV retains 1,000 episode records. `report_id` replaces the original absolute `html_path`. The same UUID identifies the archived HTML and JSON in the run's `experience/` directory. All 3,000 score references were matched to those files. The selected trajectories are successful rollouts with zero recorded contacts. The JSON content retains the original bytes and uses display-friendly filenames.
 
-`meet_threaten` counts updates at which contact was recorded by the historical simulator. Use `success` to calculate the archived outcome curves. Each run has a three-file SAC checkpoint set from near the end of training. The manifest records its archive paths and hashes. [Checkpoint placement and verified commands](../../docs/reproduction.md#load-a-verified-historical-checkpoint)
+`meet_threaten` counts updates at which a collision flag was recorded by the historical simulator. In the mixed run, 809 of 873 logged successful episodes have a nonzero count. Use the original `success` field to reproduce the displayed goal-arrival curves. Each run has a three-file SAC checkpoint set from near the end of training. The manifest records its archive paths and hashes. [Checkpoint placement and verified commands](../../docs/reproduction.md#load-a-verified-historical-checkpoint)
 
 ## DDPG and TD3
 
 [ddpg-td3-success.csv](ddpg-td3-success.csv) contains 7,000 records with `run`, `episode` and `success` from TensorBoard's `Train/Success_Rate` scalar. The export uses the archival run names and excludes wall-clock timestamps and the original event filenames. Manifest entries for TensorBoard point to the event directory and give the hash of its event file.
 
-The outer folder of the 2026-06-06 11:40 DDPG run is labeled DDPG + VOAPF. The nested TensorBoard folder is labeled DDPG + APF. Exact manuscript figure assignments are pending. Many of the early score CSVs lack usable episode-level outcomes.
+The verified outer archive folder and nested TensorBoard folder for the 2026-06-06 11:40 DDPG run both use the `+VOAPF` label. The [figure manifest](../manuscript/data/manifest.csv) maps its outcomes to Figure 15(c), whose panel is labeled DDPG+APF. The archive folder name and deployed controller implementation require independent run configuration evidence. Many early score CSVs lack usable episode-level outcomes.

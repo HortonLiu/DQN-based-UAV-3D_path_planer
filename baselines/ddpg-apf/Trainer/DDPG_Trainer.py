@@ -30,6 +30,14 @@ class DDPG_Trainer(BaseTrainer):
         self.exploration_noise = float(None2Value(param.get("exploration_noise"), 0.2))
         self.exploration_noise_min = float(None2Value(param.get("exploration_noise_min"), 0.02))
         self.load_model = int(float(None2Value(param.get("Load_Model"), 1)))
+        self.manuscript_map_level = param.get("manuscript_map_level")
+        self.checkpoint_directory = os.path.join(root, "Mod")
+        if self.manuscript_map_level is not None:
+            if self.manuscript_map_level not in (2, 3):
+                raise ValueError("Shared map level must be 2 or 3")
+            self.checkpoint_directory = os.path.join(
+                self.checkpoint_directory, "manuscript", f"level{int(self.manuscript_map_level)}"
+            )
         self.epoch = 0
         self.loss = 0.0
 
@@ -58,12 +66,9 @@ class DDPG_Trainer(BaseTrainer):
             self.epoch = Mod["epoch"]
             return
 
-        if self.name is None:
-            path_actor = root + "/Mod/DDPG_actor.pth"
-            path_critic = root + "/Mod/DDPG_critic.pth"
-        else:
-            path_actor = root + "/Mod/DDPG_actor_" + self.name + ".pth"
-            path_critic = root + "/Mod/DDPG_critic_" + self.name + ".pth"
+        suffix = "" if self.name is None else "_" + self.name
+        path_actor = os.path.join(self.checkpoint_directory, f"DDPG_actor{suffix}.pth")
+        path_critic = os.path.join(self.checkpoint_directory, f"DDPG_critic{suffix}.pth")
 
         if os.path.exists(path_actor) and os.path.exists(path_critic):
             try:
@@ -77,7 +82,11 @@ class DDPG_Trainer(BaseTrainer):
             except Exception as e:
                 print(e.args)
 
-    def save(self, directory=root + "/Mod/"):
+    def save(self, directory=None):
+        if directory is None:
+            directory = self.checkpoint_directory
+        elif self.manuscript_map_level is not None and os.path.realpath(directory) != os.path.realpath(self.checkpoint_directory):
+            raise ValueError(f"Shared map checkpoints use {self.checkpoint_directory}")
         if not os.path.exists(directory):
             os.makedirs(directory)
         actor_state = {

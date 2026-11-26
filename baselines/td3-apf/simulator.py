@@ -2,6 +2,9 @@
 ##功能：所有类别的顶端控制器，实现各类别参数的调控，
 ##并通过参数的调控生成不同的工厂类
 import time
+import argparse
+from functools import partial
+from pathlib import Path
 from BaseClass.CalMod import *
 from FactoryClass.EnvFactory import *
 import sys
@@ -36,7 +39,7 @@ from torch.utils.tensorboard import SummaryWriter # 加入這行
     
 
 class simulator():
-    def __init__(self) -> None:
+    def __init__(self, map_level=None, episodes=None) -> None:
         #DQN训练相关参数(默认)
         self.TARGET_UPDATE = 10   #Q网络更新周期
         self.num_episodes = 150000  #训练周期长度
@@ -57,7 +60,19 @@ class simulator():
         self.stat=1   #1:开始 2：暂停 3：停止
 
         #自动载入配置文件，进行初始化
+        self.map_level = map_level
+        if map_level not in (None, 2, 3):
+            raise ValueError('Shared map level must be 2 or 3')
         self.Init_From_XML()
+        if map_level is not None:
+            if episodes is not None:
+                self.num_episodes = episodes
+            if not 1 <= self.num_episodes <= 1000:
+                raise ValueError('Shared maps require 1–1000 episodes')
+            sys.path.append(str(Path(__file__).resolve().parents[2]))
+            from baselines.manuscript_scene_adapter import reset_manuscript_scene
+
+            self.env.shared_scene_reset = partial(reset_manuscript_scene, self.env, map_level)
 
         #训练结果记录模块初始化
         self.Init_Record_Mod()
@@ -72,7 +87,10 @@ class simulator():
         try:
             file=open(self.result_path,'a+',newline="")
             self.CsvWriter=csv.writer(file)
-            self.CsvWriter.writerow(["sum_Episode","Episode"," Score"," Avg.Score","eps-greedy","success","failed","meet_threaten",'loss','step','avg_trainning_time','avg_testing_time','total_time'])
+            fields = ["sum_Episode","Episode"," Score"," Avg.Score","eps-greedy","success","failed","meet_threaten",'loss','step','avg_trainning_time','avg_testing_time','total_time']
+            if self.map_level is not None:
+                fields.extend(('map_level', 'map_episode', 'map_seed'))
+            self.CsvWriter.writerow(fields)
         except Exception as e:
             print(e)
     
@@ -94,15 +112,23 @@ class simulator():
 
                 #创建环境类
                 env_dict=config_dict.get('env')
+                if self.map_level is not None:
+                    env_dict = dict(env_dict, manuscript_map_level=self.map_level)
                 self.env=self.EnvFactory.Create_Env(env_dict)  
         except Exception as e:
             print(e.args)  #输出异常信息
             return None
 
     def StartAndTrain(self,flag=0): 
+        count, remainder = divmod(self.num_episodes, 10)
+        if self.map_level is None:
+            remainder = 0
         for i in range(10):
-            with tqdm(total=int(self.num_episodes / 10), desc='Iteration %d' % i) as pbar:
-                for i_episode in range(int(self.num_episodes / 10)):
+            iteration_episodes = count + (i < remainder)
+            if self.map_level is not None and not iteration_episodes:
+                continue
+            with tqdm(total=iteration_episodes, desc='Iteration %d' % i) as pbar:
+                for i_episode in range(iteration_episodes):
                     if self.stat==2:
                         continue   #暂停
                     elif self.stat==3: 
@@ -119,7 +145,8 @@ class simulator():
                             # === [新增] 將數據寫入 TensorBoard ===
                             # 格式: add_scalar('圖表標題', 數值, X軸(通常是 Epoch 或 Step))
                             if self.writer:
-                                current_step = self.num_episodes / 10 * i + i_episode + 1
+                                current_step = (self.epoch if self.map_level is not None
+                                                else self.num_episodes / 10 * i + i_episode + 1)
                                 self.writer.add_scalar('Train/Average_Score', info['average_score'], current_step)
                                 self.writer.add_scalar('Train/Loss', info['loss'], current_step)
                                 self.writer.add_scalar('Train/Success_Rate', info['success'], current_step)
@@ -134,7 +161,8 @@ class simulator():
                         if (i_episode + 1) % 2 == 0:
                             pbar.set_postfix({
                                 'episode':
-                                '%d' % (self.num_episodes / 10 * i + i_episode + 1),
+                                    '%d' % (self.epoch if self.map_level is not None
+                                            else self.num_episodes / 10 * i + i_episode + 1),
                                 'MAX return':
                                 '%.3f' % self.Max_score,
                                 'return':
@@ -155,7 +183,7 @@ class simulator():
         self.env.Trainer.hard_update()
 
     def record_list(self):
-        sum_epoch=score=average_score=eps=success=lose=meet_threaten=loss=step=0
+        info = self.env.result if self.map_level is not None else {}
         self.infos=[]  #清空列表
         traing_time=0
         testing_time=0
@@ -164,7 +192,14 @@ class simulator():
             testing_time+=uav.Testing_time
         traing_time=traing_time/len(self.env.Agents)
         testing_time=testing_time/len(self.env.Agents)
-        self.CsvWriter.writerow([sum_epoch,self.epoch,score,average_score,eps,success,lose,meet_threaten,loss,step,traing_time,testing_time,self.executed_time])
+        result_fields = ('score', 'average_score', 'eps', 'success', 'lose', 'meet_threaten', 'loss', 'step')
+        row = [info.get('sum_epoch', 0), self.epoch]
+        row.extend(info.get(field, 0) for field in result_fields)
+        row.extend((traing_time, testing_time, self.executed_time))
+        if self.map_level is not None:
+            scene = self.env.manuscript_scene
+            row.extend((scene.level, scene.episode, scene.seed))
+        self.CsvWriter.writerow(row)
 
     def record(self,info=None):
         #将运行结果进行记录
@@ -211,7 +246,26 @@ class simulator():
     def Set_Action_Dim(self, action_dim):
         self.action_dim = action_dim
         
-if __name__=="__main__":
-    sim=simulator()
+def main():
+    parser = argparse.ArgumentParser(description='Train the PG-ITD3 baseline')
+    parser.add_argument('--map-level', type=int, choices=(2, 3),
+                        help='Use shared manuscript scenes for new baseline runs')
+    parser.add_argument('--episodes', type=int, metavar='1–1000',
+                        help='Override the episode count for shared maps')
+    args = parser.parse_args()
+    if args.episodes is not None:
+        if args.map_level is None:
+            parser.error('--episodes requires --map-level')
+        if not 1 <= args.episodes <= 1000:
+            parser.error('--episodes must be between 1 and 1000')
+
+    sim=simulator(map_level=args.map_level, episodes=args.episodes)
     print(sim.env)
-    sim.StartAndTrain()
+    try:
+        sim.StartAndTrain()
+    finally:
+        sim.writer.close()
+
+
+if __name__=="__main__":
+    main()

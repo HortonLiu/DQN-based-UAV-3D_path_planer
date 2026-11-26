@@ -12,10 +12,20 @@ root=os.path.dirname(os.path.abspath(__file__)) #当前根目录
 from torch.autograd import Variable
 import numpy as np
 
+
+MANUSCRIPT_CELL_STRIDE_M = 1.0
+MANUSCRIPT_LIDAR_RAYS = 683
+MANUSCRIPT_LIDAR_HALF_FOV = math.radians(120.0)
+
+
 class UAV(BaseAgent):
     def __init__(self,param:dict,env=None) -> None:
         super().__init__(param)
         self.param=param
+        self.controller_profile = param.get('controller_profile', 'legacy')
+        if self.controller_profile not in ('legacy', 'manuscript'):
+            raise ValueError('controller_profile must be legacy or manuscript')
+        self.manuscript_profile = self.controller_profile == 'manuscript'
         self.name=param.get("name")
         self.j=param.get("j")
         self.V_vector=Loc(0,0,0)
@@ -25,7 +35,7 @@ class UAV(BaseAgent):
         
         self.R=int(param.get("R"))+0.5*self.j
         self.R_comm=int(param.get("R_comm"))+0.75*self.j
-        self.Scan_Radius = float(param.get("Scan_Radius", 40.0))
+        self.Scan_Radius = 5.6 if self.manuscript_profile else float(param.get("Scan_Radius", 40.0))
         self.ac=int(param.get("Acceration"))+0.25*self.j
         
         # XML budgets remain in the original one-second navigation reference.
@@ -40,7 +50,8 @@ class UAV(BaseAgent):
         self.step_increment = 2
         self.step_units_per_second = self.step_increment * self.control_hz
         self.controls_per_decision = self.control_hz
-        self.set_episode_duration(float(param.get("Max_Step")) * self.reference_dt)
+        base_steps = 900 if self.manuscript_profile else float(param.get("Max_Step"))
+        self.set_episode_duration(base_steps * self.reference_dt)
         self.Step = 0
         self.f_max=float(param.get("f_max"))+0.1*self.j
 
@@ -53,10 +64,18 @@ class UAV(BaseAgent):
         self.virtual_force_growth = float(param.get("virtual_force_growth", 2.0))
         self.max_virtual_force = float(param.get("max_virtual_force", 40.0))
         self.bonus_steps_per_v_obs = int(param.get("bonus_steps_per_v_obs", 50))
+        self.virtual_influence_radius = 15.0
+        if self.manuscript_profile:
+            self.stuck_step_limit = 10
+            self.stuck_distance_threshold = 3.0
+            self.virtual_force_initial = 10.0
+            self.virtual_force_growth = 2.0
+            self.max_virtual_force = 40.0
+            self.bonus_steps_per_v_obs = 50
+            self.virtual_influence_radius = 10.0
         self.bonus_duration_s = self.bonus_steps_per_v_obs * self.reference_dt
         self.bonus_step_increment = self._seconds_to_step_units(self.bonus_duration_s)
         self.stuck_window_seconds = self.stuck_step_limit * self.reference_dt
-        self.virtual_influence_radius = 15.0
         self.max_virtual_obstacles = int(param.get("max_virtual_obstacle", 200))
         # ==========================================
 
@@ -167,12 +186,27 @@ class UAV(BaseAgent):
         self._next_virtual_id = 1
         self.last_episode_result = {}
         self.terminal_info = None
+        self._decision_progress = 0.0
+        self._decision_boundary_violation = False
 
     def check_is_stuck(self):
         if len(self.stuck_history) < self.stuck_history_samples:
             return False
         displacement = Eu_Loc_distance(self.stuck_history[0], self.stuck_history[-1])
         return displacement < self.stuck_distance_threshold
+
+    def _goal_ray_midpoint(self):
+        dx = self.goal.x - self.position.x
+        dy = self.goal.y - self.position.y
+        distance = math.hypot(dx, dy)
+        if not distance:
+            return None
+        direction = Loc(dx / distance, dy / distance, 0)
+        hit = self._solid_ray_hit_distance(self.position, direction)
+        if not 0 < hit <= self.Scan_Radius:
+            return None
+        return Loc(self.position.x + 0.5 * hit * direction.x,
+                   self.position.y + 0.5 * hit * direction.y, self.position.z)
 
     def _update_virtual_sources(self):
         # Gain growth and source insertion retain their one-second reference cadence.
@@ -189,13 +223,19 @@ class UAV(BaseAgent):
         else:
             if len(self.active_virtual_obstacles) >= self.max_virtual_obstacles:
                 return
-            angle = random.uniform(0, 2 * math.pi)
-            self.active_virtual_obstacles.append({
-                'id': self._next_virtual_id, 'pos': copy.copy(self.position),
+            source = {
+                'id': self._next_virtual_id,
                 'force': self.virtual_force_initial, 'created_time_s': self.sim_time,
-                # Choose the near-coincident escape direction once, not 480 times/s.
-                'escape_direction': (math.cos(angle), math.sin(angle)),
-            })
+            }
+            if self.manuscript_profile:
+                source['pos'] = self._goal_ray_midpoint()
+                if source['pos'] is None:
+                    return
+            else:
+                angle = random.uniform(0, 2 * math.pi)
+                source['pos'] = copy.copy(self.position)
+                source['escape_direction'] = (math.cos(angle), math.sin(angle))
+            self.active_virtual_obstacles.append(source)
             self._next_virtual_id += 1
             self.Max_Step += self.bonus_step_increment
         self.virtual_obstacle_records = [{
@@ -207,7 +247,7 @@ class UAV(BaseAgent):
         total_force = Loc(0, 0, 0)
         f_obs_sum = Loc(0, 0, 0)
         
-        repulsion_range = 30.0 
+        repulsion_range = 5.6 if self.manuscript_profile else 30.0
 
         # 1. 真實障礙物斥力
         for threaten in self.env.buildings:
@@ -227,14 +267,16 @@ class UAV(BaseAgent):
 
         # 2. 目標引力
         f_att = Loc(0, 0, 0)
-        att_strength = k_att * 2.0 
+        att_strength = k_att * 2.0
+        if self.manuscript_profile:
+            att_strength = k_att if (current_pos.x, current_pos.y) != (self.goal.x, self.goal.y) else 0.0
         att_angle = calculate_angle(current_pos, self.goal)
         f_att.x = att_strength * math.cos(att_angle)
         f_att.y = att_strength * math.sin(att_angle)
 
         # 3. 牆壁斥力
         f_wall = Loc(0, 0, 0)
-        wall_threshold = 30 
+        wall_threshold = repulsion_range
         k_wall = k_rep_obs 
         
         if current_pos.x < wall_threshold:
@@ -256,19 +298,22 @@ class UAV(BaseAgent):
         for v_obs in self.active_virtual_obstacles:
             vx = current_pos.x - v_obs['pos'].x
             vy = current_pos.y - v_obs['pos'].y
-            
             distance = math.hypot(vx, vy)
-            if distance < 0.1:
-                unit_vx, unit_vy = v_obs.get('escape_direction', (1.0, 0.0))
-            else:
-                unit_vx = vx / (distance + 0.001)
-                unit_vy = vy / (distance + 0.001)
-            dist_to_vobs = distance
             v_range = self.virtual_influence_radius
-            if dist_to_vobs < v_range:
-                current_v_force = v_obs['force'] * (1.0 - dist_to_vobs/v_range)
-                f_virtual.x += unit_vx * current_v_force
-                f_virtual.y += unit_vy * current_v_force
+            if distance >= v_range:
+                continue
+            unit_vx = vx / (distance + 0.001)
+            unit_vy = vy / (distance + 0.001)
+            if self.manuscript_profile:
+                clearance = max(distance, 0.1)
+                gain_multiplier = (1.0 / clearance - 1.0 / v_range)**2
+            else:
+                if distance < 0.1:
+                    unit_vx, unit_vy = v_obs.get('escape_direction', (1.0, 0.0))
+                gain_multiplier = 1.0 - distance / v_range
+            current_v_force = v_obs['force'] * gain_multiplier
+            f_virtual.x += unit_vx * current_v_force
+            f_virtual.y += unit_vy * current_v_force
 
         total_force.x = f_obs_sum.x + f_att.x + f_wall.x + f_virtual.x
         total_force.y = f_obs_sum.y + f_att.y + f_wall.y + f_virtual.y
@@ -345,7 +390,7 @@ class UAV(BaseAgent):
         self.Train_time+=(end-start)
         return re
 
-    def reset(self,option=None):
+    def reset(self, option=None, scene=None):
         self._reset_control_clock()
         if option=="local reset":
             self.Step=0
@@ -358,22 +403,19 @@ class UAV(BaseAgent):
             self.path=[] 
             self.V_record=[]
             self.R_record=[]
-            self.V_vector=Loc(5,3,0)
-            seta=random.uniform(0,2*math.pi)
-            self.V_dir=seta
-            self.V_vector.x=self.Max_V*math.cos(seta)
-            self.V_vector.y=self.Max_V*math.sin(seta)
+            if scene is None:
+                heading = random.uniform(0, 2 * math.pi)
+                start = (random.uniform(10, 210), random.uniform(1, 10))
+                goal = (random.uniform(330, 490), random.uniform(420, 490))
+            else:
+                heading, start, goal = scene.heading_rad, scene.start, scene.goal
+            self.V_dir = heading
+            self.V_vector = Loc(self.Max_V * math.cos(heading), self.Max_V * math.sin(heading), 0)
             self.V=self.Calc_V()
             self.infos=[]
             self.data_num=0
-            
-            x=random.uniform(10,210)
-            y=random.uniform(1,10)
-            self.position=Loc(x,y,0)
-            
-            x=random.uniform(330,490)
-            y=random.uniform(420,490)
-            self.goal=Loc(x,y,0)
+            self.position = Loc(*start, 0)
+            self.goal = Loc(*goal, 0)
             
             self.sub_goals = [self.goal]
             
@@ -422,22 +464,41 @@ class UAV(BaseAgent):
                 self.path_times.append(self.sim_time)
 
     def _finish_update(self, reward, info):
-        if info in ('success', 'lose'):
+        if info in ('success', 'lose') or (self.manuscript_profile and info == 'meet_threaten'):
             self.done = True
             self.terminal_info = info
             self._record_path(force=True)
             if info == 'success':
                 self.reach_goal = 1
                 self.target_step = self.Step
-                reward += 100.0 + max(0.0, self.base_duration_s - self.sim_time) / self.reference_dt
+                if self.manuscript_profile:
+                    elapsed_steps = math.ceil(self.Control_step / self.controls_per_decision)
+                    remaining_steps = max(0.0, self.base_duration_s / self.reference_dt - elapsed_steps)
+                    reward += 100.0 + 50.0 * remaining_steps
+                else:
+                    reward += 100.0 + max(0.0, self.base_duration_s - self.sim_time) / self.reference_dt
                 with open('path.csv', 'w', newline='') as output:
                     csv.writer(output).writerows(self.path)
-            else:
-                reward -= 20.0
+            elif info == 'lose':
+                reward -= 50.0 if self.manuscript_profile else 20.0
         self.R_record.append(reward)
         self.score += reward
         self.total_score += reward
         return reward, self.done, info
+
+    def _manuscript_update_reward(self, progress, steering_bias, boundary_violation, info):
+        if info == 'meet_threaten':
+            # Collision replaces the entire navigation reward, including at 480 Hz.
+            return -100.0
+        self._decision_progress += progress
+        self._decision_boundary_violation |= boundary_violation
+        if info == 'normal' and self.Control_step % self.controls_per_decision:
+            return 0.0
+        reward = (2.0 * self._decision_progress - 0.02 * abs(steering_bias) - 0.05
+                  - 10.0 * self._decision_boundary_violation)
+        self._decision_progress = 0.0
+        self._decision_boundary_violation = False
+        return reward
 
     def update_PathPlan(self, action):
         """One physical update: Step +2, displacement = speed * selected dt."""
@@ -453,6 +514,8 @@ class UAV(BaseAgent):
         distance_before = Eu_Loc_distance(self.position, self.goal)
         if distance_before < 15.0:
             return self._finish_update(0.0, 'success')
+        if self.manuscript_profile:
+            self._update_virtual_sources()
         old_position = copy.copy(self.position)
         advance = getattr(self.env, 'advance_dynamic_obstacles', None)
         if advance is not None:
@@ -464,6 +527,8 @@ class UAV(BaseAgent):
         self.V = self.Calc_V()
         self.position.x += self.V_vector.x * self.control_dt
         self.position.y += self.V_vector.y * self.control_dt
+        boundary_violation = (not 0 <= self.position.x <= self.env.len
+                              or not 0 <= self.position.y <= self.env.width)
         self.position.x = max(0, min(self.position.x, self.env.len))
         self.position.y = max(0, min(self.position.y, self.env.width))
         collision = self.env.Threaten_rate(self.position) > 0
@@ -477,9 +542,22 @@ class UAV(BaseAgent):
         self.V_record.append(self.V)
         self.Train_epoch += 1
         self._refresh_sensors()
-        self._update_virtual_sources()
+        if not self.manuscript_profile:
+            self._update_virtual_sources()
         self._record_path()
         distance_after = Eu_Loc_distance(self.position, self.goal)
+        if self.manuscript_profile:
+            if collision:
+                info = 'meet_threaten'
+            elif distance_after < 15.0:
+                info = 'success'
+            elif self.Step >= self.Max_Step:
+                info = 'lose'
+            else:
+                info = 'normal'
+            reward = self._manuscript_update_reward(distance_before - distance_after,
+                                                    steering_bias, boundary_violation, info)
+            return self._finish_update(reward, info)
         reward = distance_before - distance_after
         reward -= (0.1 + 0.05 * abs(steering_bias)) * self.control_dt / self.reference_dt
         if collision:
@@ -507,6 +585,10 @@ class UAV(BaseAgent):
             t = (self.env.width - A.y) / d_hat.y
             if 0 < t < T_min: T_min = t
 
+        return min(T_min, self._solid_ray_hit_distance(A, d_hat))
+
+    def _solid_ray_hit_distance(self, A, d_hat):
+        T_min = float('inf')
         for b in self.env.buildings:
             vx = A.x - b.position.x
             vy = A.y - b.position.y
@@ -525,8 +607,10 @@ class UAV(BaseAgent):
         return T_min
 
     def _sample_lidar_grid(self):
-        # Preserve the existing ray-casting observation geometry and encoding.
-        grid_dim, stride = 11, 10.0
+        if self.manuscript_profile and self.hardware_hz_enabled:
+            return self._sample_manuscript_scan()
+        grid_dim = 11
+        stride = MANUSCRIPT_CELL_STRIDE_M if self.manuscript_profile else 10.0
         offset = (grid_dim // 2) * stride
         grid = np.zeros(121)
         for i in range(grid_dim):
@@ -535,7 +619,13 @@ class UAV(BaseAgent):
                 distance = math.hypot(dx, dy)
                 if distance < 1e-3:
                     continue
-                hit = self.get_ray_hit_distance(self.position, Loc(dx / distance, dy / distance, 0))
+                direction = Loc(dx / distance, dy / distance, 0)
+                if self.manuscript_profile:
+                    hit = self._solid_ray_hit_distance(self.position, direction)
+                    if hit > self.Scan_Radius:
+                        continue
+                else:
+                    hit = self.get_ray_hit_distance(self.position, direction)
                 if hit > distance + stride / 2.0 - 1e-5:
                     grid[i * grid_dim + j] = 0.0
                 elif hit >= distance - stride / 2.0:
@@ -544,7 +634,57 @@ class UAV(BaseAgent):
                     grid[i * grid_dim + j] = -1.0
         return grid
 
+    def _scan_hit_distances(self, directions):
+        if not self.env.buildings:
+            return np.full(len(directions), np.inf)
+        centers = np.array([(b.position.x - self.position.x, b.position.y - self.position.y)
+                            for b in self.env.buildings])
+        radii = np.array([b._R for b in self.env.buildings])
+        clearance_squared = np.sum(centers**2, axis=1) - radii**2
+        if np.any(clearance_squared < 0):
+            return np.zeros(len(directions))
+        projections = directions @ centers.T
+        discriminants = projections**2 - clearance_squared
+        hits = projections - np.sqrt(np.maximum(discriminants, 0.0))
+        detected = (discriminants >= 0) & (hits > 0) & (hits <= self.Scan_Radius)
+        return np.min(np.where(detected, hits, np.inf), axis=1)
+
+    def _sample_manuscript_scan(self):
+        heading = math.atan2(self.V_vector.y, self.V_vector.x)
+        angles = heading + np.linspace(-MANUSCRIPT_LIDAR_HALF_FOV, MANUSCRIPT_LIDAR_HALF_FOV,
+                                       MANUSCRIPT_LIDAR_RAYS)
+        directions = np.column_stack((np.cos(angles), np.sin(angles)))
+        hits = self._scan_hit_distances(directions)
+
+        half_cell = MANUSCRIPT_CELL_STRIDE_M / 2.0
+        offsets = (np.indices((11, 11)).reshape(2, -1).T - 5) * MANUSCRIPT_CELL_STRIDE_M
+        # Assign all projected rays crossing each square within range. A hit in front
+        # of a cell still contributes an occlusion vote to that cell.
+        entry = np.zeros((len(directions), len(offsets)))
+        leave = np.full_like(entry, self.Scan_Radius)
+        for axis in (0, 1):
+            direction = directions[:, axis, None]
+            parallel = np.abs(direction) < 1e-12
+            center = offsets[None, :, axis]
+            safe_direction = np.where(parallel, 1.0, direction)
+            near = (center - half_cell) / safe_direction
+            far = (center + half_cell) / safe_direction
+            parallel_entry = np.where(np.abs(center) <= half_cell, -np.inf, np.inf)
+            entry = np.maximum(entry, np.where(parallel, parallel_entry, np.minimum(near, far)))
+            leave = np.minimum(leave, np.where(parallel, np.inf, np.maximum(near, far)))
+        crossings = entry <= leave
+
+        distances = np.linalg.norm(offsets, axis=1)
+        occluded = hits[:, None] < distances - half_cell
+        free = hits[:, None] > distances + half_cell
+        votes = np.array([(crossings & occluded).sum(axis=0), (crossings & free).sum(axis=0),
+                          (crossings & ~(occluded | free)).sum(axis=0)])
+        winners = votes.argmax(axis=0)
+        unique = (votes == votes.max(axis=0)).sum(axis=0) == 1
+        return np.where(unique, winners - 1, -1).astype(float)
+
     def _refresh_sensors(self):
+        # Holds apply to the policy observation. The field uses current simulation geometry.
         tick = self.Control_step
         if (self.cached_rtk_pos is None or tick % self.steps_per_rtk == 0) and self._last_rtk_tick != tick:
             self.cached_rtk_pos = copy.copy(self.position)
@@ -561,9 +701,15 @@ class UAV(BaseAgent):
         self._refresh_sensors()
         pos, velocity = self.cached_rtk_pos, self.cached_rtk_vel
         state = np.empty(126)
-        state[:5] = [(self.goal.x - pos.x) / 500.0,
-                     (self.goal.y - pos.y) / 500.0,
-                     (self.goal.z - pos.z) / 100.0,
-                     velocity.x / self.Max_V, velocity.y / self.Max_V]
+        if self.manuscript_profile:
+            state[:5] = [(self.goal.x - pos.x) / self.env.len,
+                         (self.goal.y - pos.y) / self.env.width,
+                         velocity.x / self.Max_V, velocity.y / self.Max_V,
+                         pos.z / self.env.h]
+        else:
+            state[:5] = [(self.goal.x - pos.x) / 500.0,
+                         (self.goal.y - pos.y) / 500.0,
+                         (self.goal.z - pos.z) / 100.0,
+                         velocity.x / self.Max_V, velocity.y / self.Max_V]
         state[5:] = self.cached_lidar_grid
         return state

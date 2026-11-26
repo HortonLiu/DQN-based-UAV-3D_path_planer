@@ -1,0 +1,118 @@
+{
+  "Original_Colors": {
+    "trajectory": "#5070DD",
+    "static": "#FF0000",
+    "dynamic": "#008000",
+    "dynamic_track": "#90EE90",
+    "start": "#00FF00",
+    "goal": "#FF0000",
+    "virtual_surface": "#800080",
+    "virtual_center": "#8A2BE2",
+    "callout": "#FF0000"
+  },
+  "Camera": {
+    "Projection": "orthographic",
+    "Elevation_deg": 78,
+    "Azimuth_deg": -45
+  },
+  "No_Smoothing_Or_Resampling": true,
+  "Coordinates_From_HTML": true,
+  "No_Timing_Inferred_From_Point_Counts": true,
+  "Panels": [
+    {
+      "Panel": "16a",
+      "File": "artwork29.pdf",
+      "SHA256": "b44d32093eb75bad35614ad694690302de60d0fb0181f5fed95f289c10cb2466",
+      "Vector_Image_Objects": 0,
+      "Trajectory_Points": 764,
+      "Trajectory_SHA256": "aefc5f7fb17ba9c046f0cb5819ba6616fe95e91d6048c2a50c1a6d7e60731af4",
+      "Static_Obstacles": 20,
+      "Dynamic_Obstacles": 6,
+      "Dynamic_Tracks": 6,
+      "Virtual_Sources": 0,
+      "All_Encoded_Surface_Vertices": 15584,
+      "Start": [
+        132.53061406083836,
+        3.2500382448581298,
+        0
+      ],
+      "Goal": [
+        446.66028767205586,
+        431.438174563335,
+        0
+      ],
+      "Original_Red_Frame": null,
+      "Width_pt": 367.2,
+      "Height_pt": 352.512,
+      "Source_HTML": "95201273-ff28-4956-acb9-8187fd9e8a32.html",
+      "Source_SHA256": "3d3b46ba18cc0965b37f26b6da6dd5673f490e351be618a4993f13464dab14ca",
+      "Overleaf_Path": "Picture/trajectory/Figure16a_trajectory.pdf"
+    },
+    {
+      "Panel": "17a",
+      "File": "artwork31.pdf",
+      "SHA256": "c57556c7b07b750865c9ac520ae6b85867b270390b0ef055bc41fab0edd9a283",
+      "Vector_Image_Objects": 0,
+      "Trajectory_Points": 711,
+      "Trajectory_SHA256": "f22cbbcef6ac81d1840970e2c4082064f2a5a0cb3d4f8c59e30fc3ef1800fdf3",
+      "Static_Obstacles": 26,
+      "Dynamic_Obstacles": 0,
+      "Dynamic_Tracks": 0,
+      "Virtual_Sources": 3,
+      "Virtual_Surface_Rendering": "Original purple face at original opacity; purple mesh above physical obstacles",
+      "All_Encoded_Surface_Vertices": 15928,
+      "Start": [
+        23.865429935958492,
+        6.6674183663036946,
+        0
+      ],
+      "Goal": [
+        454.2439509402137,
+        461.8931662888274,
+        0
+      ],
+      "Original_Red_Frame": null,
+      "Width_pt": 190.8,
+      "Height_pt": 183.168,
+      "Source_HTML": "0f2fb3ad-448a-4c82-91ad-3965703aa3af.html",
+      "Source_SHA256": "d02ddf31456c2fb3b4bbaa9a4d860ba469c42538291b4acc85b0e72341a24274",
+      "Overleaf_Path": "Picture/trajectory/Figure17a_trajectory_V1.pdf"
+    },
+    {
+      "Panel": "17b",
+      "File": "artwork32.pdf",
+      "SHA256": "587a37f6a0411d5c99afcba2891633dd0863834d13b70b3ada8d583242e8c68a",
+      "Vector_Image_Objects": 0,
+      "Trajectory_Points": 1660,
+      "Trajectory_SHA256": "4c8091da59c4c106bd7fb92a0cdd4a1bf572c2f7d1285646e22831d879a2ea7b",
+      "Static_Obstacles": 26,
+      "Dynamic_Obstacles": 0,
+      "Dynamic_Tracks": 0,
+      "Virtual_Sources": 5,
+      "Virtual_Surface_Rendering": "Original purple face at original opacity; purple mesh above physical obstacles",
+      "All_Encoded_Surface_Vertices": 16304,
+      "Start": [
+        123.06920752702776,
+        8.163601776238778,
+        0
+      ],
+      "Goal": [
+        475.6520459180283,
+        476.83742516960905,
+        0
+      ],
+      "Original_Red_Frame": [
+        401.41382683431925,
+        -111.15842137911595,
+        289.76340868792295,
+        134.2330283825668
+      ],
+      "Width_pt": 190.8,
+      "Height_pt": 183.168,
+      "Source_HTML": "0acd1113-3e42-4835-a4cb-3bdbea617ef7.html",
+      "Source_SHA256": "3278eca5762c39c00985fd20156165c3fef04ffcd01d888e989a652086e565dc",
+      "Overleaf_Path": "Picture/trajectory/Figure17b_trajectory_V4.pdf"
+    }
+  ],
+  "Virtual_Surface_Visibility_Fix": "Physical meshes first; original purple faces at opacity0.4 and purple mesh overlay; source geometry unchanged."
+}
